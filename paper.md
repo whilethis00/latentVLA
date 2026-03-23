@@ -6,7 +6,38 @@
 
 ---
 
-## 0. 한 줄 포지션
+## 0. 논문 핵심 서사 — 3개의 Aha Moment
+
+리뷰어를 설득하려면 딱 3개의 "aha moment"가 논리적으로 연결되어야 한다.
+
+```
+Aha 1: z 품질 → 성능         (왜 z가 중요한가?)
+    ↓
+Aha 2: VLM-z > MLP-z         (어떻게 z를 개선하는가?)
+    ↓
+Aha 3: z form이 품질을 결정함 (어떻게 VLM에서 z를 뽑는가?)
+```
+
+**Aha 1 — "z 품질이 성능을 결정한다"**
+기존 4개 모델(M1~M4)로 증명. z_shuffle_gap vs LIBERO 성공률 scatter plot 하나로
+논문의 전제를 확립. 이것이 없으면 "왜 VLM으로 z를 개선해야 하냐"는 질문에 답할 수 없다.
+→ **Exp 1이 논문 전체를 정당화한다.**
+
+**Aha 2 — "VLM이 만든 z는 질이 다르다"**
+MLP prior(M4) vs PaliGemma prior. z_shuffle_gap, best-of-K, 태스크 성공률 전부에서
+VLM-z가 이겨야 논문이 성립한다.
+→ **Exp 2가 핵심 contribution이다.**
+
+**Aha 3 — "z를 어떻게 뽑느냐도 중요하다 — 우리가 최선을 찾았다"**
+last token / mean pool / plan token 비교 + t-SNE 시각화. "VLM을 그냥 갖다 쓴 게
+아니라 z를 설계했다"는 것을 보여주는 파트. 방법론의 깊이를 만든다.
+→ **Exp 3이 논문의 완성도를 만든다.**
+
+**6월 전 목표: 이 3개를 끝낸다. 시뮬레이션 스케일업은 그 이후.**
+
+---
+
+## 0b. 한 줄 포지션
 
 > **"LDM이 이미지 생성의 패러다임을 바꿨듯, 우리는 로봇 행동 생성에서 latent space의 역할을 처음으로 체계적으로 정의하고, VLM이 만든 semantic latent z가 그 핵심임을 증명한다."**
 
