@@ -1,0 +1,58 @@
+# LatentVLA — PaliGemma-3B 학습 설정
+# 사용법: python scripts/train_vlm.py --config configs/vlm_paligemma.yaml
+
+system2:
+  model_name: "google/paligemma-3b-pt-224"
+  z_form: "plan"              # 'last' | 'pool' | 'plan'  ← ablation 핵심
+  pool_k: 8
+  lora_rank: 16
+  lora_alpha: 32
+  lora_target_modules:
+    - "q_proj"
+    - "v_proj"
+  proprio_dim: 9
+  proprio_hidden: 128
+
+encoder:
+  context_dim: 256            # System2VLM 출력 차원 = System1 conditioning 차원
+  siglip_model: "google/siglip-base-patch16-224"  # semantic future loss용
+
+latent:
+  z_dim: 128
+
+model:
+  flow_hidden: 512
+  flow_depth: 4
+  flow_steps: 10
+
+loss:
+  prior_weight: 1.0
+  semantic_future_weight: 0.1
+
+data:
+  dataset_type: libero
+  dataset_path: "/home/introai4/home_lustre/introai4/libero/libero_object_openvla_processed/"
+  action_horizon: 8
+  image_size: 224
+  num_workers: 4
+
+training:
+  seed: 42
+  num_epochs: 100
+  batch_size: 16              # PaliGemma 메모리 때문에 기존(64)보다 줄임
+  grad_accum_steps: 4         # effective batch = 16 * 4 = 64
+  learning_rate: 3.0e-4       # flow heads LR
+  lora_lr: 3.0e-5             # VLM LoRA LR (10배 낮게)
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  warmup_steps: 200
+  stage2_epoch: 10            # 이 epoch부터 LoRA 활성화
+  eval_every: 5
+  save_every: 10
+  best_of_ks: [1, 5]
+  output_dir: "outputs/runs/vlm_sfp_plan"
+
+logging:
+  use_wandb: false
+  project: "latentVLA"
+  run_name: null              # null이면 자동 생성

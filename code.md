@@ -458,27 +458,52 @@ accelerate>=0.28.0     # gradient checkpointing
 
 ```
 Week 1:
-  □ models/system2_vlm.py 구현
-  □ smoke_test_vlm.py 통과 (3가지 z_form)
+  ✅ models/system2_vlm.py 구현 (3 z_form, LoRA, dummy fallback)
+  ✅ scripts/smoke_test_vlm.py 작성
 
 Week 2:
-  □ models/latent_vla.py 구현
-  □ data/libero_dataset.py raw_image 추가
-  □ training/builder.py build_vlm_model() 추가
-  □ forward pass 전체 동작 확인
+  ✅ models/latent_vla.py 구현 (System2 + StochFlowPrior 통합)
+  ✅ data/libero_dataset.py raw_image 추가 (include_raw_image 옵션)
+  ✅ training/builder.py build_vlm_model() / build_vlm_datasets() 추가
 
 Week 3:
-  □ training/trainer_vlm.py 구현 (2-stage)
-  □ configs/vlm_paligemma.yaml 작성
-  □ scripts/train_vlm.py 작성
-  □ Stage 1 10 epoch loss 하강 확인
+  ✅ training/trainer_vlm.py 구현 (2-stage, bf16, grad_accum)
+  ✅ configs/vlm_paligemma.yaml 작성
+  ✅ scripts/train_vlm.py 작성
+  □ A100에서 Stage 1 10 epoch loss 하강 확인 ← 실제 실행 필요
 
 Week 4:
-  □ vlm_sfp_last / pool / plan 전체 100 epoch 학습
-  □ M1~M4 Exp 1 오프라인 평가
+  ✅ scripts/run_exp2.sh (3가지 z_form 일괄 학습)
+  ✅ scripts/run_exp1.sh (M1~M4 + VLM 오프라인 평가)
+  ✅ scripts/plot_exp1.py (scatter plot 생성)
+  □ 실제 학습 실행 (A100)
+  □ M1~M4 Exp 1 오프라인 평가 결과
   □ Exp 1 scatter plot 생성
-  □ 코드 + 결과 GitHub push
 ```
+
+## 구현 완료 파일 목록 (2026-03-23)
+
+| 파일 | 상태 | 설명 |
+|------|------|------|
+| `models/system2_vlm.py` | ✅ | PaliGemma wrapper, 3 z_form, LoRA |
+| `models/latent_vla.py` | ✅ | System2 + StochFlowPrior 통합 |
+| `models/__init__.py` | ✅ | System2VLM, LatentVLA export 추가 |
+| `training/trainer_vlm.py` | ✅ | 2-stage 학습, bf16, grad_accum |
+| `training/builder.py` | ✅ | build_vlm_model 등 추가 |
+| `data/libero_dataset.py` | ✅ | raw_image 옵션 추가 |
+| `configs/vlm_paligemma.yaml` | ✅ | VLM 학습 설정 |
+| `scripts/train_vlm.py` | ✅ | VLM 학습 진입점 |
+| `scripts/smoke_test_vlm.py` | ✅ | VLM 동작 검증 (dummy mode) |
+| `scripts/run_exp1.sh` | ✅ | Exp 1 자동화 스크립트 |
+| `scripts/run_exp2.sh` | ✅ | Exp 2 자동화 스크립트 |
+| `scripts/plot_exp1.py` | ✅ | Exp 1 scatter plot |
+| `requirements.txt` | ✅ | peft, bitsandbytes, accelerate 추가 |
+
+## 다음 할 일
+
+1. `conda run -n vla python scripts/smoke_test_vlm.py` 로 코드 동작 확인
+2. A100 compute node에서 Stage 1 학습 10 epoch 테스트
+3. 전체 학습 시작 (run_exp2.sh)
 
 ---
 

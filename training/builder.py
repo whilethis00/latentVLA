@@ -153,3 +153,84 @@ def build_model(cfg: dict, action_dim: int, proprio_dim: int, train_ds=None):
         raise ValueError(f"Unknown model type: {model_type}")
 
     return context_encoder, planner_encoder, policy
+
+
+# ── VLM 모델 빌드 (LatentVLA) ──────────────────────────────────────────────────
+
+def build_vlm_datasets(cfg: dict):
+    """LatentVLA용 데이터셋 빌드 (기존 build_datasets와 동일하나 vlm_mode=True)."""
+    data_cfg = cfg["data"]
+    kwargs = dict(
+        action_horizon=data_cfg["action_horizon"],
+        image_size=data_cfg["image_size"],
+        include_raw_image=True,   # PaliGemma용 uint8 이미지 추가
+    )
+    if data_cfg["dataset_type"] == "libero":
+        train_ds = LiberoDataset(data_cfg["dataset_path"], split="train", **kwargs)
+        val_ds   = LiberoDataset(data_cfg["dataset_path"], split="valid", **kwargs)
+        if hasattr(train_ds, "action_mean"):
+            val_ds.action_mean = train_ds.action_mean
+            val_ds.action_std  = train_ds.action_std
+    elif data_cfg["dataset_type"] == "robomimic":
+        train_ds = RobomimicDataset(data_cfg["dataset_path"], split="train", **kwargs)
+        val_ds   = RobomimicDataset(data_cfg["dataset_path"], split="valid", **kwargs)
+        if hasattr(train_ds, "action_mean"):
+            val_ds.action_mean = train_ds.action_mean
+            val_ds.action_std  = train_ds.action_std
+    else:
+        raise ValueError(f"Unknown dataset_type: {data_cfg['dataset_type']}")
+    return train_ds, val_ds
+
+
+def build_dataloaders_vlm(train_ds, val_ds, cfg: dict):
+    data_cfg  = cfg["data"]
+    train_cfg = cfg["training"]
+    train_loader = DataLoader(
+        train_ds, batch_size=train_cfg["batch_size"],
+        shuffle=True, num_workers=data_cfg.get("num_workers", 4),
+        pin_memory=True, drop_last=True,
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=train_cfg["batch_size"],
+        shuffle=False, num_workers=data_cfg.get("num_workers", 4),
+        pin_memory=True,
+    )
+    return train_loader, val_loader
+
+
+def build_vlm_model(cfg: dict, action_dim: int):
+    """LatentVLA (System2VLM + StochFlowPrior) 빌드."""
+    from models.system2_vlm import System2VLM
+    from models.latent_vla import LatentVLA
+
+    s2_cfg  = cfg["system2"]
+    enc_cfg = cfg["encoder"]
+    lat_cfg = cfg["latent"]
+    mdl_cfg = cfg["model"]
+
+    system2 = System2VLM(
+        model_name=s2_cfg["model_name"],
+        context_dim=enc_cfg["context_dim"],
+        z_form=s2_cfg["z_form"],
+        pool_k=s2_cfg.get("pool_k", 8),
+        freeze_backbone=True,           # 항상 Stage 1으로 시작
+        lora_rank=s2_cfg.get("lora_rank", 16),
+        lora_alpha=s2_cfg.get("lora_alpha", 32),
+        lora_target_modules=s2_cfg.get("lora_target_modules", None),
+        proprio_dim=s2_cfg.get("proprio_dim", 9),
+        proprio_hidden=s2_cfg.get("proprio_hidden", 128),
+    )
+
+    model = LatentVLA(
+        system2=system2,
+        action_dim=action_dim,
+        action_horizon=cfg["data"]["action_horizon"],
+        z_dim=lat_cfg["z_dim"],
+        context_dim=enc_cfg["context_dim"],
+        siglip_model=enc_cfg.get("siglip_model", "google/siglip-base-patch16-224"),
+        prior_weight=cfg.get("loss", {}).get("prior_weight", 1.0),
+        flow_hidden=mdl_cfg["flow_hidden"],
+        flow_depth=mdl_cfg["flow_depth"],
+        flow_steps=mdl_cfg["flow_steps"],
+    )
+    return model
