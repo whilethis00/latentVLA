@@ -8,9 +8,9 @@
 
 ```
 로그인 노드 (ECE-util1)
- └─ screen  ← Claude Code 세션 유지 (screen은 Claude가 제어 못함)
+ └─ tmux -s claude  ← Claude Code 실행 & 세션 유지
      └─ qsub → GPU 노드 SSH 접속 권한 획득
-         └─ tmux  ← Claude가 제어 가능한 단위
+         └─ tmux -s work  ← Claude가 send-keys로 제어
              └─ singularity 컨테이너 (실제 실험 환경)
                  └─ CUDA_VISIBLE_DEVICES=N python train.py
                     (할당 GPU 외 노드 내 다른 GPU도 접근 가능)
@@ -19,7 +19,7 @@
 **핵심 원리:**
 - PBS 잡을 받는 이유 = 그 **GPU 노드에 SSH 접속 권한**을 얻기 위함
 - 노드에 들어오면 해당 노드의 **모든 GPU 접근 가능** (PBS는 CUDA_VISIBLE_DEVICES만 설정, 격리 없음)
-- `screen` → Claude Code 프로세스 유지 / `tmux` → Claude가 명령 전달하는 작업 단위
+- `tmux` 하나로 Claude Code 유지 + 작업 제어 모두 가능 (screen 불필요)
 - 여러 introai 계정으로 각각 잡을 받으면 GPU를 더 많이 확보 가능
 
 **Claude 제어 방법:**
@@ -255,19 +255,21 @@ Host introai4~33, kkheon, rintern*
 
 ## 9. Claude Code 운영 방법
 
+**tmux 안에서 Claude를 실행해야 함** — Claude가 tmux를 직접 제어하므로, Claude 자신도 tmux 세션 안에 있어야 세션 유지 + 작업 제어가 모두 가능.
+
 ```bash
-# 1. screen으로 Claude Code 세션 유지
-screen -S claude
+# 1. tmux 세션 시작
+tmux new-session -s claude
+
+# 2. tmux 안에서 Claude Code 실행
 claude
 
-# 2. 나갈 때 (Claude는 계속 살아있음)
-Ctrl+A, D
+# 3. 나갈 때 (Claude는 계속 살아있음)
+Ctrl+B, D
 
-# 3. 다시 붙기
-screen -r claude
+# 4. 다시 붙기
+tmux attach -t claude
 ```
-
-**핵심:** screen은 Claude Code 유지용, tmux는 Claude가 GPU 노드 작업 제어용
 
 ```bash
 # Claude가 다른 계정 GPU 노드에서 작업 실행하는 흐름
@@ -275,7 +277,7 @@ ssh introai12@147.46.121.38          # 다른 계정 접속
 qsub ...                              # 잡 제출 → GPU 노드 배정
 ssh <gpu-node>                        # GPU 노드 진입
 tmux new-session -s work             # tmux 세션 생성
-# → Claude가 tmux send-keys로 명령 전달
+# → Claude가 tmux send-keys -t work "..." Enter 로 명령 전달
 ```
 
 ---
