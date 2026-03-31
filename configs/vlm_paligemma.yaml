@@ -10,7 +10,7 @@ system2:
   lora_target_modules:
     - "q_proj"
     - "v_proj"
-  proprio_dim: 9
+  proprio_dim: 8  # LIBERO proprio dim
   proprio_hidden: 128
 
 encoder:

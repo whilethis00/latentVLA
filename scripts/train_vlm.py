@@ -89,7 +89,8 @@ def main():
 
     # 모델
     from training.builder import build_vlm_model
-    model = build_vlm_model(cfg, action_dim=train_ds.action_dim)
+    model = build_vlm_model(cfg, action_dim=train_ds.action_dim,
+                            proprio_dim=train_ds.proprio_dim)
     print(f"[train_vlm] 모델 생성 완료")
 
     # 학습
