@@ -78,8 +78,11 @@ class SigLIPEncoder(nn.Module):
         if not self._use_hf:
             B = pixel_values.shape[0]
             return torch.zeros(B, self.embed_dim, device=pixel_values.device)
-        outputs = self.model.get_image_features(pixel_values=pixel_values)
-        return outputs
+        # vision_model.pooler_output → L2 normalize (transformers 5.x 호환)
+        import torch.nn.functional as F
+        vision_out = self.model.vision_model(pixel_values=pixel_values)
+        feat = vision_out.pooler_output  # (B, hidden_size)
+        return F.normalize(feat, dim=-1)
 
     def tokenize(self, texts: list, device: torch.device):
         """Tokenize text list → (input_ids, attention_mask) on device."""

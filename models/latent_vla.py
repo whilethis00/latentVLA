@@ -215,7 +215,10 @@ class LatentVLA(nn.Module):
         if d.get("system2_proj"):
             self.system2.proj.load_state_dict(d["system2_proj"])
         if d.get("system2_proprio_encoder"):
-            self.system2.proprio_encoder.load_state_dict(d["system2_proprio_encoder"])
+            try:
+                self.system2.proprio_encoder.load_state_dict(d["system2_proprio_encoder"])
+            except RuntimeError as e:
+                print(f"[LatentVLA] proprio_encoder 로드 스킵 (shape 불일치): {e}")
         if d.get("system1"):
             self.system1.load_state_dict(d["system1"])
         if d.get("system2_lora") and self.system2._lora_enabled:

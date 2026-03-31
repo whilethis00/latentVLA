@@ -198,8 +198,11 @@ def build_dataloaders_vlm(train_ds, val_ds, cfg: dict):
     return train_loader, val_loader
 
 
-def build_vlm_model(cfg: dict, action_dim: int):
-    """LatentVLA (System2VLM + StochFlowPrior) 빌드."""
+def build_vlm_model(cfg: dict, action_dim: int, proprio_dim: int = None):
+    """LatentVLA (System2VLM + StochFlowPrior) 빌드.
+
+    proprio_dim: 데이터셋 기준 값 (지정 시 cfg["system2"]["proprio_dim"] 무시)
+    """
     from models.system2_vlm import System2VLM
     from models.latent_vla import LatentVLA
 
@@ -207,6 +210,8 @@ def build_vlm_model(cfg: dict, action_dim: int):
     enc_cfg = cfg["encoder"]
     lat_cfg = cfg["latent"]
     mdl_cfg = cfg["model"]
+
+    _proprio_dim = proprio_dim if proprio_dim is not None else s2_cfg.get("proprio_dim", 9)
 
     system2 = System2VLM(
         model_name=s2_cfg["model_name"],
@@ -217,7 +222,7 @@ def build_vlm_model(cfg: dict, action_dim: int):
         lora_rank=s2_cfg.get("lora_rank", 16),
         lora_alpha=s2_cfg.get("lora_alpha", 32),
         lora_target_modules=s2_cfg.get("lora_target_modules", None),
-        proprio_dim=s2_cfg.get("proprio_dim", 9),
+        proprio_dim=_proprio_dim,
         proprio_hidden=s2_cfg.get("proprio_hidden", 128),
     )
 

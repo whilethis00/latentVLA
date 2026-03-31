@@ -37,7 +37,7 @@ class VLMOfflineEvaluator:
         self.best_of_ks = best_of_ks or [1, 5]
 
     @torch.no_grad()
-    def evaluate(self, dataloader) -> dict:
+    def evaluate(self, dataloader, max_batches: int = None) -> dict:
         self.model.eval()
         import numpy as np
         import torch.nn.functional as F
@@ -51,7 +51,9 @@ class VLMOfflineEvaluator:
             "z_shuffle_gap": [],
         }
 
-        for batch in tqdm(dataloader, desc="VLM Eval", leave=False):
+        for i, batch in enumerate(tqdm(dataloader, desc="VLM Eval", leave=False)):
+            if max_batches is not None and i >= max_batches:
+                break
             actions = batch["actions"].to(self.device)
             B = actions.shape[0]
 

@@ -216,7 +216,7 @@ class System2VLM(nn.Module):
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=128,
+            max_length=512,   # 이미지 토큰 256 + 텍스트 여유
         )
         return (
             enc["pixel_values"].to(device),
@@ -237,10 +237,19 @@ class System2VLM(nn.Module):
         Returns: f̃ (B, context_dim)
         """
         if self._use_real:
+            # transformers 5.x: training mode에서 token_type_ids 필수
+            # 0 = image token, 1 = text token
+            n_img = getattr(self.processor, "image_seq_length", 256)
+            B_seq, seq_len = input_ids.shape
+            token_type_ids = torch.ones(B_seq, seq_len, dtype=torch.long,
+                                        device=input_ids.device)
+            token_type_ids[:, :n_img] = 0
+
             outputs = self.vlm(
                 pixel_values=pixel_values,
                 input_ids=input_ids,
                 attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
                 output_hidden_states=True,
                 return_dict=True,
             )
@@ -252,21 +261,21 @@ class System2VLM(nn.Module):
             hidden = torch.randn(B, seq_len, self.PALIGEMMA_HIDDEN,
                                  device=pixel_values.device)
 
-        # z_form에 따라 VLM feature 추출
-        vlm_feat = self._extract_feature(hidden, attention_mask)  # (B, 2048)
+        # z_form에 따라 VLM feature 추출 (float32로 캐스팅 — proprio_encoder/proj는 float32)
+        vlm_feat = self._extract_feature(hidden, attention_mask).float()  # (B, 2048)
 
         # Proprio fusion
         if proprio is not None:
-            prop_feat = self.proprio_encoder(proprio.to(vlm_feat.dtype))
+            prop_feat = self.proprio_encoder(proprio.float())
             fused = torch.cat([vlm_feat, prop_feat], dim=-1)
         else:
             B = vlm_feat.shape[0]
             zeros = torch.zeros(B, self.proprio_encoder[0].in_features,
-                                device=vlm_feat.device, dtype=vlm_feat.dtype)
+                                device=vlm_feat.device)
             prop_feat = self.proprio_encoder(zeros)
             fused = torch.cat([vlm_feat, prop_feat], dim=-1)
 
-        return self.proj(fused).float()  # (B, context_dim), float32로 변환
+        return self.proj(fused)  # (B, context_dim), float32
 
     def _extract_feature(
         self,
