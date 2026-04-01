@@ -1,0 +1,10 @@
+{"train/total_loss": 2.121938, "train/action_flow_loss": 1.015017, "train/prior_flow_loss": 1.100999, "train/semantic_future_loss": 0.059226, "epoch": 1}
+{"train/total_loss": 1.104625, "train/action_flow_loss": 0.702524, "train/prior_flow_loss": 0.398774, "train/semantic_future_loss": 0.03327, "epoch": 2}
+{"train/total_loss": 1.009457, "train/action_flow_loss": 0.679441, "train/prior_flow_loss": 0.327158, "train/semantic_future_loss": 0.02858, "epoch": 3}
+{"train/total_loss": 0.812418, "train/action_flow_loss": 0.603297, "train/prior_flow_loss": 0.207025, "train/semantic_future_loss": 0.020954, "epoch": 4}
+{"train/total_loss": 0.713871, "train/action_flow_loss": 0.559439, "train/prior_flow_loss": 0.152914, "train/semantic_future_loss": 0.015182, "epoch": 5, "val/action_mse_prior": 1.283326, "val/action_mse_posterior": 0.746301, "val/sampling_diversity": 0.671422, "val/best_of_1": 1.27824, "val/best_of_5": 0.518516, "val/future_cosine_sim": 0.986409, "val/z_shuffle_gap": -0.003838, "val/prior_posterior_gap": 0.537026}
+{"train/total_loss": 0.641087, "train/action_flow_loss": 0.519974, "train/prior_flow_loss": 0.119877, "train/semantic_future_loss": 0.012364, "epoch": 6}
+{"train/total_loss": 0.594188, "train/action_flow_loss": 0.48961, "train/prior_flow_loss": 0.10346, "train/semantic_future_loss": 0.011184, "epoch": 7}
+{"train/total_loss": 0.562141, "train/action_flow_loss": 0.470452, "train/prior_flow_loss": 0.090635, "train/semantic_future_loss": 0.010541, "epoch": 8}
+{"train/total_loss": 0.540035, "train/action_flow_loss": 0.456814, "train/prior_flow_loss": 0.082199, "train/semantic_future_loss": 0.010222, "epoch": 9}
+{"train/total_loss": 0.527312, "train/action_flow_loss": 0.448914, "train/prior_flow_loss": 0.077388, "train/semantic_future_loss": 0.010107, "epoch": 10, "val/action_mse_prior": 1.0542, "val/action_mse_posterior": 0.64512, "val/sampling_diversity": 0.567681, "val/best_of_1": 1.041282, "val/best_of_5": 0.440767, "val/future_cosine_sim": 0.989742, "val/z_shuffle_gap": 0.03496, "val/prior_posterior_gap": 0.409081}

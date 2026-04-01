@@ -1,3 +1,6 @@
-outputs/
+outputs/**
+!outputs/**/
+!outputs/**/result.md
+!outputs/**/train_log.jsonl
 data/
 __pycache__/
