@@ -61,20 +61,30 @@ future_cosine_sim   : 0.1333
 
 ### Day 5 (4/4): 빠른 학습 실험 (Sanity Check)
 
-- [ ] LIBERO-Object, 10 epoch, Stage 1만 (PaliGemma frozen)
+- [x] LIBERO-Object, 10 epoch, Stage 1만 (PaliGemma frozen)
   ```bash
   conda run -n vla torchrun --nproc_per_node=GPU scripts/train_vlm.py \
     --config configs/vlm_paligemma.yaml \
     --override training.max_epochs=10
   ```
-- [ ] `curve_ep010.png` 저장되는지, loss 감소 확인
-- [ ] `latest.pt` 체크포인트 저장 확인
+- [x] `curve_ep010.png` 저장되는지, loss 감소 확인
+- [x] `latest.pt` 체크포인트 저장 확인
+
+**결과 (2026-04-01):**
+```
+total_loss=0.5273  action_flow_loss=0.4489  prior_flow_loss=0.0774  semantic_future_loss=0.0101
+action_mse_prior=1.0542  action_mse_posterior=0.6451  prior_posterior_gap=0.4091
+best_of_1=1.0413  best_of_5=0.4408  future_cosine_sim=0.9897  z_shuffle_gap=0.0350
+```
+체크포인트: `outputs/runs/sanity_check/ckpt_10.pt`, `ckpt_final.pt`
 
 ### Day 6-7 (4/5~4/6): 버퍼 + 점검
 
 - [ ] smoke test 또는 학습 중 발견된 버그 수정
 - [ ] `experiments.md` 업데이트 (sanity check 결과 기록)
 - [ ] Apr_W2 계획 초안 작성
+- [ ] OfflineEvaluator 전체 테스트 — M1~M3 동일 조건 평가 실행 (`eval_results.json` 생성)
+- [ ] M1~M4 비교표 초안 작성 (`experiment_easy.md` 섹션 10 채우기)
 
 ---
 
@@ -82,7 +92,7 @@ future_cosine_sim   : 0.1333
 
 1. ✅ `smoke_test_vlm.py` 에러 없이 통과
 2. ✅ `evaluate_offline_vlm.py`가 LatentVLA 체크포인트를 받아 z_shuffle_gap 출력 가능
-3. ⬜ LIBERO-Object 10 epoch 학습 완주 + loss curve 저장 (Day 5)
+3. ✅ LIBERO-Object 10 epoch 학습 완주 + loss curve 저장 (Day 5)
 
 ---
 
