@@ -162,32 +162,39 @@ class VLMTrainer:
 
     Stage 1: VLM frozen → flow heads (proj + system1) 만 학습
     Stage 2: LoRA 활성화 → LoRA params (낮은 LR) + flow heads (높은 LR) 학습
+
+    DDP: torchrun으로 실행 시 is_main=True인 rank 0만 저장/로깅 수행.
     """
 
     def __init__(
         self,
-        model: LatentVLA,
+        model,
         train_loader,
         val_loader,
         cfg: dict,
         device: torch.device = None,
+        is_main: bool = True,
+        train_sampler=None,
     ):
         self.model = model
+        # DDP로 래핑된 경우 raw model은 .module
+        self.raw_model = model.module if hasattr(model, "module") else model
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.cfg = cfg
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.is_main = is_main
+        self.train_sampler = train_sampler
 
         self.train_cfg = cfg["training"]
         self.loss_cfg = cfg.get("loss", {})
         self.output_dir = self.train_cfg["output_dir"]
-        os.makedirs(self.output_dir, exist_ok=True)
+        if self.is_main:
+            os.makedirs(self.output_dir, exist_ok=True)
 
         self.stage2_epoch = self.train_cfg.get("stage2_epoch", 10)
         self.grad_accum = self.train_cfg.get("grad_accum_steps", 4)
         self.semantic_weight = self.loss_cfg.get("semantic_future_weight", 0.1)
-
-        self.model.to(self.device)
 
         # Stage 1 optimizer (VLM frozen → non-VLM params만)
         self.optimizer = self._build_stage1_optimizer()
@@ -200,13 +207,13 @@ class VLMTrainer:
         )
 
         self.evaluator = VLMOfflineEvaluator(
-            model=self.model,
+            model=self.raw_model,
             device=self.device,
             best_of_ks=self.train_cfg.get("best_of_ks", [1, 5]),
         )
 
-        # wandb
-        self.use_wandb = cfg.get("logging", {}).get("use_wandb", False)
+        # wandb (rank 0만)
+        self.use_wandb = self.is_main and cfg.get("logging", {}).get("use_wandb", False)
         if self.use_wandb:
             try:
                 import wandb
@@ -222,12 +229,12 @@ class VLMTrainer:
 
         self.global_step = 0
         self._log_path = os.path.join(self.output_dir, "train_log.jsonl")
-        self._log_file = open(self._log_path, "w")
+        self._log_file = open(self._log_path, "w") if self.is_main else None
 
     # ── Optimizer 빌드 ────────────────────────────────────────────────────────
 
     def _build_stage1_optimizer(self):
-        params = list(self.model.non_vlm_parameters())
+        params = list(self.raw_model.non_vlm_parameters())
         return AdamW(
             params,
             lr=self.train_cfg["learning_rate"],
@@ -236,8 +243,8 @@ class VLMTrainer:
 
     def _build_stage2_optimizer(self):
         """Stage 2: LoRA (작은 LR) + 나머지 (큰 LR) 두 그룹."""
-        lora_params = self.model.vlm_lora_parameters()
-        non_vlm_params = list(self.model.non_vlm_parameters())
+        lora_params = self.raw_model.vlm_lora_parameters()
+        non_vlm_params = list(self.raw_model.non_vlm_parameters())
         param_groups = [
             {"params": non_vlm_params, "lr": self.train_cfg["learning_rate"]},
         ]
@@ -263,10 +270,15 @@ class VLMTrainer:
 
         for epoch in range(1, self.train_cfg["num_epochs"] + 1):
 
+            # DistributedSampler는 epoch마다 shuffle seed 갱신 필요
+            if self.train_sampler is not None:
+                self.train_sampler.set_epoch(epoch)
+
             # Stage 2 진입
             if epoch == self.stage2_epoch:
-                print(f"\n[VLMTrainer] === Stage 2 시작 (epoch {epoch}) ===")
-                self.model.system2.enable_lora()
+                if self.is_main:
+                    print(f"\n[VLMTrainer] === Stage 2 시작 (epoch {epoch}) ===")
+                self.raw_model.system2.enable_lora()
                 self.optimizer = self._build_stage2_optimizer()
                 total_steps = (
                     len(self.train_loader) // self.grad_accum
@@ -283,20 +295,24 @@ class VLMTrainer:
             if epoch % self.train_cfg.get("eval_every", 5) == 0:
                 val_metrics = self.evaluator.evaluate(self.val_loader)
                 log_dict.update({f"val/{k}": v for k, v in val_metrics.items()})
-                self._print(epoch, train_metrics, val_metrics)
+                if self.is_main:
+                    self._print(epoch, train_metrics, val_metrics)
             else:
-                self._print(epoch, train_metrics)
+                if self.is_main:
+                    self._print(epoch, train_metrics)
 
-            if self.use_wandb:
-                self.wandb.log(log_dict, step=self.global_step)
-            self._write_log(log_dict)
+            if self.is_main:
+                if self.use_wandb:
+                    self.wandb.log(log_dict, step=self.global_step)
+                self._write_log(log_dict)
 
-            if epoch % self.train_cfg.get("save_every", 10) == 0:
-                self._save(epoch)
+                if epoch % self.train_cfg.get("save_every", 10) == 0:
+                    self._save(epoch)
 
-        self._save("final")
-        self._log_file.close()
-        print(f"[VLMTrainer] 완료. 로그: {self._log_path}")
+        if self.is_main:
+            self._save("final")
+            self._log_file.close()
+            print(f"[VLMTrainer] 완료. 로그: {self._log_path}")
 
     # ── Epoch ─────────────────────────────────────────────────────────────────
 
@@ -353,6 +369,8 @@ class VLMTrainer:
         print(msg)
 
     def _write_log(self, d: dict):
+        if self._log_file is None:
+            return
         self._log_file.write(json.dumps(
             {k: round(v, 6) if isinstance(v, float) else v for k, v in d.items()}
         ) + "\n")
@@ -361,7 +379,7 @@ class VLMTrainer:
     def _save(self, tag):
         path = os.path.join(self.output_dir, f"ckpt_{tag}.pt")
         torch.save({
-            "model": self.model.state_dict_for_save(),
+            "model": self.raw_model.state_dict_for_save(),
             "optimizer": self.optimizer.state_dict(),
             "cfg": self.cfg,
             "z_form": self.cfg["system2"]["z_form"],

@@ -182,12 +182,21 @@ def build_vlm_datasets(cfg: dict):
     return train_ds, val_ds
 
 
-def build_dataloaders_vlm(train_ds, val_ds, cfg: dict):
+def build_dataloaders_vlm(train_ds, val_ds, cfg: dict, rank: int = 0, world_size: int = 1):
+    from torch.utils.data import DistributedSampler
     data_cfg  = cfg["data"]
     train_cfg = cfg["training"]
+    is_ddp = world_size > 1
+
+    train_sampler = (
+        DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True, drop_last=True)
+        if is_ddp else None
+    )
     train_loader = DataLoader(
         train_ds, batch_size=train_cfg["batch_size"],
-        shuffle=True, num_workers=data_cfg.get("num_workers", 4),
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
+        num_workers=data_cfg.get("num_workers", 4),
         pin_memory=True, drop_last=True,
     )
     val_loader = DataLoader(
@@ -195,7 +204,7 @@ def build_dataloaders_vlm(train_ds, val_ds, cfg: dict):
         shuffle=False, num_workers=data_cfg.get("num_workers", 4),
         pin_memory=True,
     )
-    return train_loader, val_loader
+    return train_loader, val_loader, train_sampler
 
 
 def build_vlm_model(cfg: dict, action_dim: int, proprio_dim: int = None):
