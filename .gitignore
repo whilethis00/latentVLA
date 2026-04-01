@@ -1,6 +1,7 @@
 outputs/**
 !outputs/**/
 !outputs/**/result.md
+!outputs/**/result.png
 !outputs/**/train_log.jsonl
 data/
 __pycache__/
