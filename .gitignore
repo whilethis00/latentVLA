@@ -2,6 +2,7 @@ outputs/**
 !outputs/**/
 !outputs/**/result.md
 !outputs/**/result.png
+!outputs/**/plot_result.py
 !outputs/**/train_log.jsonl
 data/
 __pycache__/
