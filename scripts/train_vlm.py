@@ -76,6 +76,14 @@ def main():
         cfg["training"]["output_dir"] = f"outputs/runs/vlm_sfp_{z_form}"
 
     if is_main:
+        import os as _os
+        _os.makedirs(cfg["training"]["output_dir"], exist_ok=True)
+        from training.trainer_vlm import _Tee
+        import datetime
+        _log_path = _os.path.join(cfg["training"]["output_dir"], "train.log")
+        _tee = _Tee(_log_path)
+        print(f"[train_vlm] 로그 파일: {_log_path}  "
+              f"(시작: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
         print("=" * 60)
         print(f"[train_vlm] z_form     : {cfg['system2']['z_form']}")
         print(f"[train_vlm] output_dir : {cfg['training']['output_dir']}")

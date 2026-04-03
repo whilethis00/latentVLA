@@ -12,8 +12,10 @@ Stage 2 (epoch stage2_epoch ~     ): VLM LoRA 활성화, 두 그룹 optimizer
 """
 
 import os
+import sys
 import json
 import time
+import datetime
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -22,6 +24,30 @@ from tqdm import tqdm
 
 from models.latent_vla import LatentVLA
 from evaluation.metrics import OfflineEvaluator
+
+
+class _Tee:
+    """stdout을 화면과 파일에 동시에 출력."""
+    def __init__(self, filepath):
+        self._file = open(filepath, "a", buffering=1)
+        self._stdout = sys.stdout
+        sys.stdout = self
+
+    def write(self, data):
+        self._stdout.write(data)
+        self._file.write(data)
+
+    def flush(self):
+        self._stdout.flush()
+        self._file.flush()
+
+    def close(self):
+        sys.stdout = self._stdout
+        self._file.close()
+
+    # tqdm 등이 참조하는 속성 위임
+    def __getattr__(self, name):
+        return getattr(self._stdout, name)
 
 
 class VLMOfflineEvaluator:
@@ -231,6 +257,14 @@ class VLMTrainer:
         self._log_path = os.path.join(self.output_dir, "train_log.jsonl")
         self._log_file = open(self._log_path, "w") if self.is_main else None
 
+        # 터미널 출력 전체를 train.log에 동시 저장 (rank 0만)
+        self._tee = None
+        if self.is_main:
+            log_path = os.path.join(self.output_dir, "train.log")
+            self._tee = _Tee(log_path)
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[VLMTrainer] 로그 파일: {log_path}  (시작: {ts})")
+
     # ── Optimizer 빌드 ────────────────────────────────────────────────────────
 
     def _build_stage1_optimizer(self):
@@ -312,7 +346,10 @@ class VLMTrainer:
         if self.is_main:
             self._save("final")
             self._log_file.close()
-            print(f"[VLMTrainer] 완료. 로그: {self._log_path}")
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[VLMTrainer] 완료. JSONL: {self._log_path}  (종료: {ts})")
+            if self._tee:
+                self._tee.close()
 
     # ── Epoch ─────────────────────────────────────────────────────────────────
 
@@ -327,7 +364,7 @@ class VLMTrainer:
         for step, batch in enumerate(pbar):
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16,
                                 enabled=self.device.type == "cuda"):
-                loss_dict = self.model.compute_loss(
+                loss_dict = self.raw_model.compute_loss(
                     batch, self.device,
                     semantic_weight=self.semantic_weight,
                     prior_weight=self.loss_cfg.get("prior_weight", 1.0),

@@ -32,8 +32,8 @@ class _DummyVLM(nn.Module):
         return self.proj(fake_hidden)
 
     def gradient_checkpointing_enable(self, **kwargs): pass
-    def parameters(self): return super().parameters()
-    def named_parameters(self): return super().named_parameters()
+    def parameters(self, recurse=True): return super().parameters(recurse=recurse)
+    def named_parameters(self, prefix='', recurse=True, remove_duplicate=True): return super().named_parameters(prefix=prefix, recurse=recurse, remove_duplicate=remove_duplicate)
 
 
 # ── System2VLM ────────────────────────────────────────────────────────────────
