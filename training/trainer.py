@@ -38,13 +38,18 @@ class Trainer:
         val_loader,
         cfg: dict,
         device: torch.device = None,
+        is_main: bool = True,
+        train_sampler=None,
     ):
         self.cfg = cfg
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.train_cfg = cfg["training"]
         self.loss_cfg = cfg["loss"]
         self.output_dir = self.train_cfg["output_dir"]
-        os.makedirs(self.output_dir, exist_ok=True)
+        self.is_main = is_main
+        self.train_sampler = train_sampler
+        if is_main:
+            os.makedirs(self.output_dir, exist_ok=True)
 
         self.context_encoder = context_encoder.to(self.device)
         self.planner_encoder = planner_encoder.to(self.device)
@@ -53,6 +58,9 @@ class Trainer:
         self.val_loader = val_loader
         self._planner_input = self.cfg["model"].get("planner_input", "full")
         self._object_state_dim = self.cfg["model"].get("object_state_dim", 10)
+        # DDP 래핑 시 .module로 실제 모델 접근 (커스텀 메서드용)
+        self._raw_enc = getattr(context_encoder, "module", context_encoder)
+        self._raw_policy = getattr(policy, "module", policy)
 
         # Optimizer: skip frozen params; avoid duplicate registration when encoders are shared
         trainable = list(p for p in context_encoder.parameters() if p.requires_grad)
@@ -69,8 +77,8 @@ class Trainer:
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=total_steps, eta_min=1e-6)
 
         self.evaluator = OfflineEvaluator(
-            context_encoder=self.context_encoder,
-            policy=self.policy,
+            context_encoder=self._raw_enc,
+            policy=getattr(self.policy, "module", self.policy),
             device=self.device,
         )
 
@@ -103,7 +111,14 @@ class Trainer:
         print(f"  Val samples:   {len(self.val_loader.dataset)}")
 
         for epoch in range(1, self.train_cfg["num_epochs"] + 1):
+            if self.train_sampler is not None:
+                self.train_sampler.set_epoch(epoch)
+
             train_metrics = self._train_epoch(epoch)
+
+            if not self.is_main:
+                continue
+
             log_dict = {f"train/{k}": v for k, v in train_metrics.items()}
             log_dict["epoch"] = epoch
 
@@ -122,10 +137,21 @@ class Trainer:
             if epoch % self.train_cfg["save_every"] == 0:
                 self._save_checkpoint(epoch)
 
-        print("[Trainer] Training complete.")
-        self._save_checkpoint("final")
-        self._log_file.close()
-        print(f"[Trainer] Log saved: {self._log_path}")
+        if self.is_main:
+            print("[Trainer] Training complete.")
+            self._save_checkpoint("final")
+            self._log_file.close()
+            print(f"[Trainer] Log saved: {self._log_path}")
+            self._generate_result()
+
+    def _generate_result(self):
+        try:
+            import sys
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from scripts.generate_result import generate
+            generate(self.output_dir, self.cfg.get("model", {}).get("type"))
+        except Exception as e:
+            print(f"[Trainer] result 생성 실패 (무시): {e}")
 
     # ── One epoch ─────────────────────────────────────────────────────────
 
@@ -161,7 +187,7 @@ class Trainer:
 
         # Language tokenization (no-op for StateContextEncoder)
         langs = list(batch["language"])
-        input_ids, attention_mask = self.context_encoder.tokenize(langs, self.device)
+        input_ids, attention_mask = self._raw_enc.tokenize(langs, self.device)
 
         # Context encoding (full state → action decoder context)
         context = self.context_encoder(image, proprio, input_ids, attention_mask)
@@ -180,27 +206,27 @@ class Trainer:
         future_feat = None
         if self.loss_cfg.get("semantic_future_weight", 0.0) > 0:
             with torch.no_grad():
-                future_feat = self.context_encoder.encode_future_image(future_input)
+                future_feat = self._raw_enc.encode_future_image(future_input)
 
         # Policy loss — kwargs vary by model type
         model_type = self.cfg["model"]["type"]
         sem_w = self.loss_cfg.get("semantic_future_weight", 0.1)
         if model_type == "flat_flow":
-            loss_dict = self.policy.compute_loss(context=context, actions=actions)
+            loss_dict = self._raw_policy.compute_loss(context=context, actions=actions)
         elif model_type == "det_latent":
-            loss_dict = self.policy.compute_loss(
+            loss_dict = self._raw_policy.compute_loss(
                 context=context, actions=actions, future_feat=future_feat,
                 semantic_weight=sem_w,
                 prior_weight=self.loss_cfg.get("prior_weight", 1.0),
             )
         elif model_type == "stoch_vae":
-            loss_dict = self.policy.compute_loss(
+            loss_dict = self._raw_policy.compute_loss(
                 context=context, actions=actions, future_feat=future_feat,
                 semantic_weight=sem_w,
                 kl_weight=self.loss_cfg.get("kl_beta", 1.0),
             )
         elif model_type == "stoch_flow_prior":
-            loss_dict = self.policy.compute_loss(
+            loss_dict = self._raw_policy.compute_loss(
                 context=context, actions=actions, future_feat=future_feat,
                 planner_context=planner_context,
                 semantic_weight=sem_w,
@@ -248,10 +274,14 @@ class Trainer:
 
     def _save_checkpoint(self, tag):
         path = os.path.join(self.output_dir, f"ckpt_{tag}.pt")
+        # DDP 래핑 시 .module로 실제 모델 접근
+        enc = getattr(self.context_encoder, "module", self.context_encoder)
+        pol = getattr(self.policy, "module", self.policy)
+        plan = getattr(self.planner_encoder, "module", self.planner_encoder)
         torch.save({
-            "context_encoder": self.context_encoder.state_dict(),
-            "planner_encoder": self.planner_encoder.state_dict() if self.planner_encoder is not self.context_encoder else None,
-            "policy": self.policy.state_dict(),
+            "context_encoder": enc.state_dict(),
+            "planner_encoder": plan.state_dict() if self.planner_encoder is not self.context_encoder else None,
+            "policy": pol.state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "cfg": self.cfg,
         }, path)

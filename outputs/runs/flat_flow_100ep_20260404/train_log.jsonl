@@ -1,0 +1,100 @@
+{"train/action_flow_loss": 1.026516, "train/total_loss": 1.026516, "epoch": 1}
+{"train/action_flow_loss": 0.789321, "train/total_loss": 0.789321, "epoch": 2}
+{"train/action_flow_loss": 0.703755, "train/total_loss": 0.703755, "epoch": 3}
+{"train/action_flow_loss": 0.655277, "train/total_loss": 0.655277, "epoch": 4}
+{"train/action_flow_loss": 0.618398, "train/total_loss": 0.618398, "epoch": 5, "val/action_mse_prior": 0.850156}
+{"train/action_flow_loss": 0.592052, "train/total_loss": 0.592052, "epoch": 6}
+{"train/action_flow_loss": 0.568392, "train/total_loss": 0.568392, "epoch": 7}
+{"train/action_flow_loss": 0.55086, "train/total_loss": 0.55086, "epoch": 8}
+{"train/action_flow_loss": 0.534118, "train/total_loss": 0.534118, "epoch": 9}
+{"train/action_flow_loss": 0.527066, "train/total_loss": 0.527066, "epoch": 10, "val/action_mse_prior": 0.702608}
+{"train/action_flow_loss": 0.516397, "train/total_loss": 0.516397, "epoch": 11}
+{"train/action_flow_loss": 0.50812, "train/total_loss": 0.50812, "epoch": 12}
+{"train/action_flow_loss": 0.501745, "train/total_loss": 0.501745, "epoch": 13}
+{"train/action_flow_loss": 0.494408, "train/total_loss": 0.494408, "epoch": 14}
+{"train/action_flow_loss": 0.490089, "train/total_loss": 0.490089, "epoch": 15, "val/action_mse_prior": 0.719559}
+{"train/action_flow_loss": 0.48292, "train/total_loss": 0.48292, "epoch": 16}
+{"train/action_flow_loss": 0.47755, "train/total_loss": 0.47755, "epoch": 17}
+{"train/action_flow_loss": 0.474796, "train/total_loss": 0.474796, "epoch": 18}
+{"train/action_flow_loss": 0.46966, "train/total_loss": 0.46966, "epoch": 19}
+{"train/action_flow_loss": 0.466601, "train/total_loss": 0.466601, "epoch": 20, "val/action_mse_prior": 0.693703}
+{"train/action_flow_loss": 0.461726, "train/total_loss": 0.461726, "epoch": 21}
+{"train/action_flow_loss": 0.456334, "train/total_loss": 0.456334, "epoch": 22}
+{"train/action_flow_loss": 0.452801, "train/total_loss": 0.452801, "epoch": 23}
+{"train/action_flow_loss": 0.450542, "train/total_loss": 0.450542, "epoch": 24}
+{"train/action_flow_loss": 0.445151, "train/total_loss": 0.445151, "epoch": 25, "val/action_mse_prior": 0.674018}
+{"train/action_flow_loss": 0.443642, "train/total_loss": 0.443642, "epoch": 26}
+{"train/action_flow_loss": 0.441287, "train/total_loss": 0.441287, "epoch": 27}
+{"train/action_flow_loss": 0.436426, "train/total_loss": 0.436426, "epoch": 28}
+{"train/action_flow_loss": 0.433981, "train/total_loss": 0.433981, "epoch": 29}
+{"train/action_flow_loss": 0.430434, "train/total_loss": 0.430434, "epoch": 30, "val/action_mse_prior": 0.667288}
+{"train/action_flow_loss": 0.431004, "train/total_loss": 0.431004, "epoch": 31}
+{"train/action_flow_loss": 0.426849, "train/total_loss": 0.426849, "epoch": 32}
+{"train/action_flow_loss": 0.423397, "train/total_loss": 0.423397, "epoch": 33}
+{"train/action_flow_loss": 0.420027, "train/total_loss": 0.420027, "epoch": 34}
+{"train/action_flow_loss": 0.416169, "train/total_loss": 0.416169, "epoch": 35, "val/action_mse_prior": 0.616365}
+{"train/action_flow_loss": 0.41345, "train/total_loss": 0.41345, "epoch": 36}
+{"train/action_flow_loss": 0.414537, "train/total_loss": 0.414537, "epoch": 37}
+{"train/action_flow_loss": 0.40774, "train/total_loss": 0.40774, "epoch": 38}
+{"train/action_flow_loss": 0.407233, "train/total_loss": 0.407233, "epoch": 39}
+{"train/action_flow_loss": 0.402773, "train/total_loss": 0.402773, "epoch": 40, "val/action_mse_prior": 0.61903}
+{"train/action_flow_loss": 0.400783, "train/total_loss": 0.400783, "epoch": 41}
+{"train/action_flow_loss": 0.401338, "train/total_loss": 0.401338, "epoch": 42}
+{"train/action_flow_loss": 0.396253, "train/total_loss": 0.396253, "epoch": 43}
+{"train/action_flow_loss": 0.391736, "train/total_loss": 0.391736, "epoch": 44}
+{"train/action_flow_loss": 0.391437, "train/total_loss": 0.391437, "epoch": 45, "val/action_mse_prior": 0.611575}
+{"train/action_flow_loss": 0.388802, "train/total_loss": 0.388802, "epoch": 46}
+{"train/action_flow_loss": 0.38652, "train/total_loss": 0.38652, "epoch": 47}
+{"train/action_flow_loss": 0.384014, "train/total_loss": 0.384014, "epoch": 48}
+{"train/action_flow_loss": 0.380207, "train/total_loss": 0.380207, "epoch": 49}
+{"train/action_flow_loss": 0.380506, "train/total_loss": 0.380506, "epoch": 50, "val/action_mse_prior": 0.601065}
+{"train/action_flow_loss": 0.376985, "train/total_loss": 0.376985, "epoch": 51}
+{"train/action_flow_loss": 0.372784, "train/total_loss": 0.372784, "epoch": 52}
+{"train/action_flow_loss": 0.370793, "train/total_loss": 0.370793, "epoch": 53}
+{"train/action_flow_loss": 0.369034, "train/total_loss": 0.369034, "epoch": 54}
+{"train/action_flow_loss": 0.367831, "train/total_loss": 0.367831, "epoch": 55, "val/action_mse_prior": 0.604959}
+{"train/action_flow_loss": 0.363895, "train/total_loss": 0.363895, "epoch": 56}
+{"train/action_flow_loss": 0.361583, "train/total_loss": 0.361583, "epoch": 57}
+{"train/action_flow_loss": 0.358372, "train/total_loss": 0.358372, "epoch": 58}
+{"train/action_flow_loss": 0.35729, "train/total_loss": 0.35729, "epoch": 59}
+{"train/action_flow_loss": 0.354724, "train/total_loss": 0.354724, "epoch": 60, "val/action_mse_prior": 0.58241}
+{"train/action_flow_loss": 0.351053, "train/total_loss": 0.351053, "epoch": 61}
+{"train/action_flow_loss": 0.350032, "train/total_loss": 0.350032, "epoch": 62}
+{"train/action_flow_loss": 0.347659, "train/total_loss": 0.347659, "epoch": 63}
+{"train/action_flow_loss": 0.343668, "train/total_loss": 0.343668, "epoch": 64}
+{"train/action_flow_loss": 0.341599, "train/total_loss": 0.341599, "epoch": 65, "val/action_mse_prior": 0.590206}
+{"train/action_flow_loss": 0.341538, "train/total_loss": 0.341538, "epoch": 66}
+{"train/action_flow_loss": 0.336814, "train/total_loss": 0.336814, "epoch": 67}
+{"train/action_flow_loss": 0.337931, "train/total_loss": 0.337931, "epoch": 68}
+{"train/action_flow_loss": 0.334034, "train/total_loss": 0.334034, "epoch": 69}
+{"train/action_flow_loss": 0.331267, "train/total_loss": 0.331267, "epoch": 70, "val/action_mse_prior": 0.570118}
+{"train/action_flow_loss": 0.330402, "train/total_loss": 0.330402, "epoch": 71}
+{"train/action_flow_loss": 0.32904, "train/total_loss": 0.32904, "epoch": 72}
+{"train/action_flow_loss": 0.324666, "train/total_loss": 0.324666, "epoch": 73}
+{"train/action_flow_loss": 0.324294, "train/total_loss": 0.324294, "epoch": 74}
+{"train/action_flow_loss": 0.324068, "train/total_loss": 0.324068, "epoch": 75, "val/action_mse_prior": 0.568978}
+{"train/action_flow_loss": 0.321747, "train/total_loss": 0.321747, "epoch": 76}
+{"train/action_flow_loss": 0.318666, "train/total_loss": 0.318666, "epoch": 77}
+{"train/action_flow_loss": 0.316849, "train/total_loss": 0.316849, "epoch": 78}
+{"train/action_flow_loss": 0.317654, "train/total_loss": 0.317654, "epoch": 79}
+{"train/action_flow_loss": 0.314091, "train/total_loss": 0.314091, "epoch": 80, "val/action_mse_prior": 0.559037}
+{"train/action_flow_loss": 0.311641, "train/total_loss": 0.311641, "epoch": 81}
+{"train/action_flow_loss": 0.31158, "train/total_loss": 0.31158, "epoch": 82}
+{"train/action_flow_loss": 0.309643, "train/total_loss": 0.309643, "epoch": 83}
+{"train/action_flow_loss": 0.310128, "train/total_loss": 0.310128, "epoch": 84}
+{"train/action_flow_loss": 0.307002, "train/total_loss": 0.307002, "epoch": 85, "val/action_mse_prior": 0.548676}
+{"train/action_flow_loss": 0.307293, "train/total_loss": 0.307293, "epoch": 86}
+{"train/action_flow_loss": 0.307479, "train/total_loss": 0.307479, "epoch": 87}
+{"train/action_flow_loss": 0.304894, "train/total_loss": 0.304894, "epoch": 88}
+{"train/action_flow_loss": 0.30501, "train/total_loss": 0.30501, "epoch": 89}
+{"train/action_flow_loss": 0.304421, "train/total_loss": 0.304421, "epoch": 90, "val/action_mse_prior": 0.557081}
+{"train/action_flow_loss": 0.30445, "train/total_loss": 0.30445, "epoch": 91}
+{"train/action_flow_loss": 0.303554, "train/total_loss": 0.303554, "epoch": 92}
+{"train/action_flow_loss": 0.30235, "train/total_loss": 0.30235, "epoch": 93}
+{"train/action_flow_loss": 0.302748, "train/total_loss": 0.302748, "epoch": 94}
+{"train/action_flow_loss": 0.302963, "train/total_loss": 0.302963, "epoch": 95, "val/action_mse_prior": 0.546532}
+{"train/action_flow_loss": 0.301334, "train/total_loss": 0.301334, "epoch": 96}
+{"train/action_flow_loss": 0.303766, "train/total_loss": 0.303766, "epoch": 97}
+{"train/action_flow_loss": 0.302256, "train/total_loss": 0.302256, "epoch": 98}
+{"train/action_flow_loss": 0.301635, "train/total_loss": 0.301635, "epoch": 99}
+{"train/action_flow_loss": 0.300755, "train/total_loss": 0.300755, "epoch": 100, "val/action_mse_prior": 0.553041}

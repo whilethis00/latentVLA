@@ -38,13 +38,14 @@ def build_datasets(cfg: dict):
     return train_ds, val_ds
 
 
-def build_dataloaders(train_ds, val_ds, cfg: dict):
+def build_dataloaders(train_ds, val_ds, cfg: dict, train_sampler=None):
     data_cfg = cfg["data"]
     train_cfg = cfg["training"]
     train_loader = DataLoader(
         train_ds,
         batch_size=train_cfg["batch_size"],
-        shuffle=True,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
         num_workers=data_cfg["num_workers"],
         pin_memory=True,
         drop_last=True,

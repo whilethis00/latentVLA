@@ -95,10 +95,12 @@ class SigLIPEncoder(nn.Module):
             truncation=True,
             return_tensors="pt",
         )
-        return (
-            encoding["input_ids"].to(device),
-            encoding["attention_mask"].to(device),
-        )
+        input_ids = encoding["input_ids"].to(device)
+        if "attention_mask" in encoding:
+            attention_mask = encoding["attention_mask"].to(device)
+        else:
+            attention_mask = torch.ones_like(input_ids)
+        return input_ids, attention_mask
 
 
 # ── Proprio MLP ───────────────────────────────────────────────────────────────

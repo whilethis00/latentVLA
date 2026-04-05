@@ -4,5 +4,6 @@ outputs/**
 !outputs/**/result.png
 !outputs/**/plot_result.py
 !outputs/**/train_log.jsonl
+!outputs/**/table.md
 data/
 __pycache__/

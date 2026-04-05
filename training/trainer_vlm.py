@@ -201,6 +201,8 @@ class VLMTrainer:
         device: torch.device = None,
         is_main: bool = True,
         train_sampler=None,
+        resume: str = None,
+        resume_epoch: int = None,
     ):
         self.model = model
         # DDP로 래핑된 경우 raw model은 .module
@@ -211,6 +213,8 @@ class VLMTrainer:
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.is_main = is_main
         self.train_sampler = train_sampler
+        self.resume = resume
+        self.resume_epoch = resume_epoch
 
         self.train_cfg = cfg["training"]
         self.loss_cfg = cfg.get("loss", {})
@@ -255,7 +259,8 @@ class VLMTrainer:
 
         self.global_step = 0
         self._log_path = os.path.join(self.output_dir, "train_log.jsonl")
-        self._log_file = open(self._log_path, "w") if self.is_main else None
+        log_mode = "a" if (self.is_main and resume) else "w"
+        self._log_file = open(self._log_path, log_mode) if self.is_main else None
 
         # 터미널 출력 전체를 train.log에 동시 저장 (rank 0만)
         self._tee = None
@@ -302,7 +307,26 @@ class VLMTrainer:
         print(f"  Train: {len(self.train_loader.dataset)}  "
               f"Val: {len(self.val_loader.dataset)}")
 
-        for epoch in range(1, self.train_cfg["num_epochs"] + 1):
+        start_epoch = 1
+        if self.resume:
+            ckpt = torch.load(self.resume, map_location=self.device)
+            self.raw_model.load_state_dict_from_save(ckpt["model"])
+            saved_epoch = ckpt.get("epoch") or self.resume_epoch
+            if saved_epoch is None:
+                raise ValueError(
+                    "체크포인트에 'epoch' 키가 없습니다. --resume_epoch으로 직접 지정하세요.\n"
+                    "  예: --resume_epoch 80"
+                )
+            start_epoch = saved_epoch + 1
+            # Stage 2 이후 체크포인트라면 LoRA 활성화 및 optimizer 재빌드
+            if start_epoch > self.stage2_epoch:
+                self.raw_model.system2.enable_lora()
+                self.optimizer = self._build_stage2_optimizer()
+            self.optimizer.load_state_dict(ckpt["optimizer"])
+            if self.is_main:
+                print(f"[VLMTrainer] Resume: {self.resume}  (epoch {start_epoch}부터 재개)")
+
+        for epoch in range(start_epoch, self.train_cfg["num_epochs"] + 1):
 
             # DistributedSampler는 epoch마다 shuffle seed 갱신 필요
             if self.train_sampler is not None:
@@ -350,6 +374,17 @@ class VLMTrainer:
             print(f"[VLMTrainer] 완료. JSONL: {self._log_path}  (종료: {ts})")
             if self._tee:
                 self._tee.close()
+            self._generate_result()
+
+    def _generate_result(self):
+        try:
+            import sys, os
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from scripts.generate_result import generate
+            z_form = self.cfg.get("system2", {}).get("z_form", "plan")
+            generate(self.output_dir, f"vlm_sfp_{z_form}")
+        except Exception as e:
+            print(f"[VLMTrainer] result 생성 실패 (무시): {e}")
 
     # ── Epoch ─────────────────────────────────────────────────────────────────
 
@@ -415,10 +450,12 @@ class VLMTrainer:
 
     def _save(self, tag):
         path = os.path.join(self.output_dir, f"ckpt_{tag}.pt")
+        epoch_val = tag if isinstance(tag, int) else None
         torch.save({
             "model": self.raw_model.state_dict_for_save(),
             "optimizer": self.optimizer.state_dict(),
             "cfg": self.cfg,
             "z_form": self.cfg["system2"]["z_form"],
+            "epoch": epoch_val,
         }, path)
         print(f"[VLMTrainer] 체크포인트 저장: {path}")

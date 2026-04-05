@@ -37,6 +37,7 @@ import argparse
 import random
 import numpy as np
 import torch
+import torch.distributed as dist
 import yaml
 
 
@@ -82,35 +83,73 @@ def main():
     cfg = load_config(args.config)
     cfg = apply_overrides(cfg, args.override)
 
-    set_seed(cfg["training"]["seed"])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[train.py] Using device: {device}")
-    print(f"[train.py] Model type: {cfg['model']['type']}")
+    # ── DDP 초기화 (torchrun 시 LOCAL_RANK 환경변수 존재) ──────────────────
+    local_rank = int(os.environ.get("LOCAL_RANK", -1))
+    is_ddp = local_rank >= 0
+    if is_ddp:
+        dist.init_process_group(backend="nccl")
+        torch.cuda.set_device(local_rank)
+        device = torch.device(f"cuda:{local_rank}")
+        is_main = (dist.get_rank() == 0)
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        is_main = True
+
+    set_seed(cfg["training"]["seed"] + (dist.get_rank() if is_ddp else 0))
+
+    if is_main:
+        print(f"[train.py] Device: {device}  DDP: {is_ddp}"
+              + (f"  world_size: {dist.get_world_size()}" if is_ddp else ""))
+        print(f"[train.py] Model type: {cfg['model']['type']}")
 
     # Build datasets
     from training.builder import build_datasets, build_dataloaders, build_model
-    print("[train.py] Loading datasets...")
+    if is_main:
+        print("[train.py] Loading datasets...")
     train_ds, val_ds = build_datasets(cfg)
-    print(f"  Train: {train_ds}")
-    print(f"  Val:   {val_ds}")
 
-    train_loader, val_loader = build_dataloaders(train_ds, val_ds, cfg)
+    # DDP용 DistributedSampler
+    train_sampler = None
+    if is_ddp:
+        from torch.utils.data.distributed import DistributedSampler
+        train_sampler = DistributedSampler(train_ds, shuffle=True)
+
+    train_loader, val_loader = build_dataloaders(train_ds, val_ds, cfg, train_sampler=train_sampler)
+
+    if is_main:
+        print(f"  Train: {len(train_ds)}  Val: {len(val_ds)}")
 
     # Build model
-    print("[train.py] Building model...")
+    if is_main:
+        print("[train.py] Building model...")
     context_encoder, planner_encoder, policy = build_model(cfg, train_ds.action_dim, train_ds.proprio_dim, train_ds)
-    n_params_enc = sum(p.numel() for p in context_encoder.parameters() if p.requires_grad)
-    n_params_plan = sum(p.numel() for p in planner_encoder.parameters() if p.requires_grad) if planner_encoder is not context_encoder else 0
-    n_params_pol = sum(p.numel() for p in policy.parameters() if p.requires_grad)
-    print(f"  Context encoder trainable: {n_params_enc:,}")
-    if n_params_plan:
-        print(f"  Planner encoder trainable: {n_params_plan:,}")
-    print(f"  Policy trainable:          {n_params_pol:,}")
+
+    # DDP 래핑
+    if is_ddp:
+        same_encoder = (planner_encoder is context_encoder)
+        from torch.nn.parallel import DistributedDataParallel as DDP
+        context_encoder = DDP(context_encoder.to(device), device_ids=[local_rank], find_unused_parameters=True)
+        policy = DDP(policy.to(device), device_ids=[local_rank], find_unused_parameters=True)
+        if same_encoder:
+            planner_encoder = context_encoder  # 동일 객체 유지
+        else:
+            planner_encoder = DDP(planner_encoder.to(device), device_ids=[local_rank], find_unused_parameters=True)
+
+    if is_main:
+        n_pol = sum(p.numel() for p in policy.parameters() if p.requires_grad)
+        print(f"  Policy trainable: {n_pol:,}")
 
     # Train
     from training.trainer import Trainer
-    trainer = Trainer(context_encoder, planner_encoder, policy, train_loader, val_loader, cfg, device)
+    trainer = Trainer(
+        context_encoder, planner_encoder, policy,
+        train_loader, val_loader, cfg, device,
+        is_main=is_main, train_sampler=train_sampler,
+    )
     trainer.train()
+
+    if is_ddp:
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

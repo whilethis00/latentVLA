@@ -25,6 +25,10 @@ def parse_args():
     p.add_argument("--config", required=True)
     p.add_argument("--override", nargs="*", default=[],
                    help="key=value 형태로 config 덮어쓰기. 예: system2.z_form=last")
+    p.add_argument("--resume", default=None,
+                   help="이어서 학습할 체크포인트 경로. 예: outputs/runs/sfp_100ep_20260401/ckpt_80.pt")
+    p.add_argument("--resume_epoch", type=int, default=None,
+                   help="resume 체크포인트의 epoch 번호 (epoch 키 없는 구 체크포인트용)")
     return p.parse_args()
 
 
@@ -131,6 +135,8 @@ def main():
     trainer = VLMTrainer(
         model, train_loader, val_loader, cfg, device,
         is_main=is_main, train_sampler=train_sampler,
+        resume=args.resume,
+        resume_epoch=args.resume_epoch,
     )
     trainer.train()
 
