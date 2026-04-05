@@ -5,5 +5,6 @@ outputs/**
 !outputs/**/plot_result.py
 !outputs/**/train_log.jsonl
 !outputs/**/table.md
+!outputs/**/table_ko.md
 data/
 __pycache__/
