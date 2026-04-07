@@ -1,4 +1,4 @@
-# 실험 요약: M1 ~ M4
+# 실험 요약: M1 ~ M5
 
 > 이 문서는 LatentVLA 프로젝트를 전혀 모르는 사람도 읽을 수 있게 작성된 요약입니다.
 
@@ -232,6 +232,7 @@ prior_posterior_gap = MSE(prior) - MSE(posterior)
 | **M2** | DetLatent | MLP(미래 이미지 피처) | 학습 시 미래 정보로 z 계산. 결정론적 (z가 하나로 고정) |
 | **M3** | StochVAE | VAE posterior 샘플링 | z를 확률 분포로 표현. KL 정규화로 prior 학습 |
 | **M4** | StochFlowPrior | 플로우 기반 prior 샘플링 | VAE 대신 정규화 플로우로 더 복잡한 prior 표현 |
+| **M5** | VLM SFP Plan | VLM plan token → StochFlowPrior | PaliGemma-3B의 plan token으로 z 생성. 시스템 2(VLM) + 시스템 1(Flow) 통합 |
 
 ### M1 — "z 없이 해보자"
 ```
@@ -269,7 +270,8 @@ VAE의 가우시안 prior → 정규화 플로우로 교체
 | M1 FlatFlow       | 0.5530 | —      | —          | —      | —      |
 | M2 DetLatent      | **0.4776** | **0.0017** | **0.7837** | **0.4759** | —      |
 | M3 StochVAE       | 0.6321 | 0.6205 | -0.0039    | 0.0116 | 0.3180 |
-| M4 StochFlowPrior | 0.6540 | 0.5395 | 0.0428     | 0.1144 | **0.3638** |
+| M4 StochFlowPrior | 0.6540 | 0.5395 | 0.0428     | 0.1144 | 0.3638 |
+| M5 VLM SFP Plan   | 0.6084 | 0.5318 | 0.0163     | 0.0766 | **0.3645** |
 
 ---
 
@@ -294,15 +296,23 @@ z 없이도 MSE 0.553. 그러나 다양한 미래를 표현할 수 없어 한계
 - `prior_posterior_gap = 0.114` → z가 어느 정도 활용되고 있음
 - `best_of_5 = 0.364` → 여러 번 샘플링해서 최선 선택 시 이득 있음
 
-### 결론 (Aha Moment 1 확인)
+### M5 (VLM SFP Plan) — VLM z의 첫 시도
+- `mse_prior = 0.608` → M4(0.654)보다 개선. VLM z가 M4보다 나은 prior 추론
+- `mse_posterior = 0.532` → M4(0.540)와 유사한 수준
+- `z_shuffle_gap = 0.016` → M4(0.043)보다 낮음. VLM z가 작업 정보를 충분히 담지 못함
+- `prior_posterior_gap = 0.077` → M4(0.114)보다 작음. prior-posterior 정렬이 비교적 잘 됨
+- `best_of_5 = 0.365` → M3(0.318)보다 높고 M4(0.364)와 유사
+
+**해석:** VLM plan token을 z로 사용하면 MSE prior 측면에서 M4보다 개선되지만, z_shuffle_gap은 오히려 낮아짐. VLM z가 flow prior와 잘 통합됐지만, plan token이 작업 구분 정보를 충분히 분리하지 못할 가능성. 더 나은 VLM z 추출 방식 탐색이 필요.
+
+### 결론 (Aha Moment 1 확인 + M5 추가)
 ```
-z_shuffle_gap:  M3(-0.004)  <  M1(—)  <  M4(0.043)  <<  M2(0.784)
-MSE (prior):    M2(0.477)   <  M1(0.553) <  M3(0.632) <   M4(0.654)
+z_shuffle_gap:  M3(-0.004)  <  M5(0.016)  <  M4(0.043)  <<  M2(0.784)
+MSE (prior):    M2(0.477)   <  M1(0.553)  <  M5(0.608)  <  M3(0.632) < M4(0.654)
 ```
 
 > **z 품질이 좋을수록 행동 품질이 좋아진다** — M2가 이를 명확히 증명.
-> 남은 과제: "미래 이미지 없이도 M2 수준의 z를 만들 수 있는가?"
-> 해답: **VLM(시스템 2)의 언어+시각 이해 능력으로 high-quality z 생성 → M5 LatentVLA**
+> M5(VLM)는 MSE prior 개선에 성공했으나, z_shuffle_gap은 M4보다 낮아 VLM z의 작업 정보 표현력 개선이 과제.
 
 ---
 
@@ -335,3 +345,4 @@ VLM이 가진 풍부한 언어/시각 이해로 z를 만들면, M2의 "oracle z"
 | M2 DetLatent      | `outputs/runs/det_latent_100ep_20260405/` |
 | M3 StochVAE       | `outputs/runs/stoch_vae_100ep_20260405/` |
 | M4 StochFlowPrior | `outputs/runs/sfp_100ep_20260401/` |
+| M5 VLM SFP Plan   | `outputs/runs/vlm_sfp_plan_100ep_20260405/` |
