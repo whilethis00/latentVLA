@@ -142,6 +142,7 @@ class StochLatentFlowPrior(nn.Module):
             "action_flow_loss": loss_action,
             "prior_flow_loss": loss_prior,
             "semantic_future_loss": loss_semantic,
+            "_z_mu": mu_q,  # posterior mean, for distillation (has grad to posterior_enc)
         }
 
     # ── Inference ─────────────────────────────────────────────────────────

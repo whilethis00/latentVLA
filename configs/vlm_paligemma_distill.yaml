@@ -1,0 +1,68 @@
+# LatentVLA M6 — z-Distillation 설정
+# M2(DetLatent) oracle z를 teacher로 삼아 VLM z를 distillation 학습
+#
+# α sweep: distill_alpha = 0.1 / 1.0 / 10.0
+#   M6a: distill_alpha: 0.1  →  output_dir: outputs/runs/vlm_sfp_distill_a01_100ep
+#   M6b: distill_alpha: 1.0  →  output_dir: outputs/runs/vlm_sfp_distill_a10_100ep
+#   M6c: distill_alpha: 10.0 →  output_dir: outputs/runs/vlm_sfp_distill_a100_100ep
+
+system2:
+  model_name: "google/paligemma-3b-pt-224"
+  z_form: "plan"
+  pool_k: 8
+  lora_rank: 16
+  lora_alpha: 32
+  lora_target_modules:
+    - "q_proj"
+    - "v_proj"
+  proprio_dim: 8
+  proprio_hidden: 128
+
+encoder:
+  context_dim: 256
+  siglip_model: "google/siglip-base-patch16-224"
+
+latent:
+  z_dim: 128
+
+model:
+  flow_hidden: 512
+  flow_depth: 4
+  flow_steps: 10
+
+# ── Oracle (M2 DetLatent, frozen) ─────────────────────────────────────────────
+oracle:
+  ckpt_path: "outputs/runs/det_latent_100ep_20260405/ckpt_final.pt"
+
+loss:
+  prior_weight: 1.0
+  semantic_future_weight: 0.1
+  distill_alpha: 1.0          # ← 이 값만 바꿔서 α sweep
+
+data:
+  dataset_type: libero
+  dataset_path: "/home/introai4/home_lustre/introai4/libero/libero_object_openvla_processed/"
+  action_horizon: 8
+  image_size: 224
+  num_workers: 4
+
+training:
+  seed: 42
+  num_epochs: 100
+  batch_size: 16
+  grad_accum_steps: 4
+  learning_rate: 3.0e-4
+  lora_lr: 3.0e-5
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  warmup_steps: 200
+  stage2_epoch: 10
+  eval_every: 5
+  save_every: 10
+  best_of_ks: [1, 5]
+  output_dir: "outputs/runs/vlm_sfp_distill_a10_100ep"  # α=1.0 기본
+
+logging:
+  use_wandb: false
+  project: "latentVLA"
+  run_name: null

@@ -15,7 +15,7 @@ from typing import Optional
 
 from models.system2_vlm import System2VLM
 from models.stoch_latent_flow_prior import StochLatentFlowPrior
-from models.encoders import SigLIPEncoder
+from models.encoders import SigLIPEncoder, ContextEncoder
 
 
 class LatentVLA(nn.Module):
@@ -45,6 +45,8 @@ class LatentVLA(nn.Module):
         flow_hidden: int = 512,
         flow_depth: int = 4,
         flow_steps: int = 10,
+        distill_alpha: float = 0.0,
+        oracle_ckpt_path: str = None,
     ):
         super().__init__()
 
@@ -72,6 +74,50 @@ class LatentVLA(nn.Module):
         self.posterior_enc = self.system1.posterior_enc
         self.semantic_head = self.system1.semantic_head if self.system1.use_future else None
         self.use_future = self.system1.use_future
+
+        # ── M6 z-Distillation: oracle (frozen M2) ─────────────────────────
+        self.distill_alpha = distill_alpha
+        self._oracle_enc = None       # frozen ContextEncoder (M2's)
+        self._oracle_posterior = None  # frozen PosteriorEncoder (M2's)
+        if distill_alpha > 0.0 and oracle_ckpt_path is not None:
+            self._load_oracle(oracle_ckpt_path, action_dim, action_horizon, z_dim)
+
+    # ── Oracle 로딩 (M6 z-Distillation) ──────────────────────────────────────
+
+    def _load_oracle(self, ckpt_path: str, action_dim: int, action_horizon: int, z_dim: int):
+        """M2(DetLatent) 체크포인트에서 ContextEncoder + PosteriorEncoder를 로드해 freeze."""
+        from models.det_latent import DetLatent
+
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+        enc_sd = ckpt["context_encoder"]
+
+        # 체크포인트 weight shape으로 dim 자동 추론
+        proprio_dim  = enc_sd["proprio_encoder.net.0.weight"].shape[1]
+        oracle_ctx_dim = enc_sd["fusion.0.weight"].shape[0]
+        future_feat_dim = self._siglip.embed_dim  # 768
+
+        oracle_enc = ContextEncoder(proprio_dim=proprio_dim, context_dim=oracle_ctx_dim)
+        oracle_enc.load_state_dict(enc_sd)
+        oracle_enc.eval()
+        for p in oracle_enc.parameters():
+            p.requires_grad = False
+        self._oracle_enc = oracle_enc
+
+        oracle_det = DetLatent(
+            context_dim=oracle_ctx_dim,
+            action_dim=action_dim,
+            action_horizon=action_horizon,
+            z_dim=z_dim,
+            future_feat_dim=future_feat_dim,
+        )
+        oracle_det.load_state_dict(ckpt["policy"])
+        oracle_det.eval()
+        for p in oracle_det.parameters():
+            p.requires_grad = False
+        self._oracle_posterior = oracle_det.posterior  # PosteriorEncoder만 보관
+
+        print(f"[LatentVLA] Oracle loaded from {ckpt_path} "
+              f"(proprio_dim={proprio_dim}, ctx_dim={oracle_ctx_dim})")
 
     # ── 학습 ──────────────────────────────────────────────────────────────────
 
@@ -102,15 +148,18 @@ class LatentVLA(nn.Module):
         f_tilde = self.system2(pixel_values, input_ids, attn_mask, proprio)  # (B, context_dim)
 
         # ── Semantic future feat (frozen SigLIP) ───────────────────────────
+        # distill_alpha > 0이면 oracle z 계산에도 future_feat 필요 → 항상 계산
+        need_future = (semantic_weight > 0 and self.system1.use_future) or \
+                      (self.distill_alpha > 0 and self._oracle_enc is not None)
         future_feat = None
-        if semantic_weight > 0 and self.system1.use_future:
+        if need_future and "future_image" in batch:
             with torch.no_grad():
                 future_feat = self._siglip.encode_image_only(
                     batch["future_image"].to(device)
                 )
 
         # ── System 1: StochFlowPrior loss ─────────────────────────────────
-        return self.system1.compute_loss(
+        loss_dict = self.system1.compute_loss(
             context=f_tilde,
             actions=actions,
             future_feat=future_feat,
@@ -118,6 +167,24 @@ class LatentVLA(nn.Module):
             semantic_weight=semantic_weight,
             prior_weight=prior_weight,
         )
+        z_mu = loss_dict.pop("_z_mu")  # posterior mean (has grad), not logged
+
+        # ── M6 z-Distillation loss ─────────────────────────────────────────
+        if self.distill_alpha > 0 and self._oracle_enc is not None and future_feat is not None:
+            with torch.no_grad():
+                oracle_ids, oracle_mask = self._oracle_enc.tokenize(
+                    batch["language"], device
+                )
+                C_t_oracle = self._oracle_enc(
+                    batch["image"].to(device), proprio, oracle_ids, oracle_mask
+                )
+                z_oracle = self._oracle_posterior(C_t_oracle, actions, future_feat)
+
+            loss_distill = F.mse_loss(z_mu, z_oracle)
+            loss_dict["distill_loss"] = loss_distill
+            loss_dict["total_loss"] = loss_dict["total_loss"] + self.distill_alpha * loss_distill
+
+        return loss_dict
 
     # ── 추론 ──────────────────────────────────────────────────────────────────
 

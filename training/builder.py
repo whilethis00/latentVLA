@@ -236,6 +236,7 @@ def build_vlm_model(cfg: dict, action_dim: int, proprio_dim: int = None):
         proprio_hidden=s2_cfg.get("proprio_hidden", 128),
     )
 
+    oracle_cfg = cfg.get("oracle", {})
     model = LatentVLA(
         system2=system2,
         action_dim=action_dim,
@@ -247,5 +248,7 @@ def build_vlm_model(cfg: dict, action_dim: int, proprio_dim: int = None):
         flow_hidden=mdl_cfg["flow_hidden"],
         flow_depth=mdl_cfg["flow_depth"],
         flow_steps=mdl_cfg["flow_steps"],
+        distill_alpha=cfg.get("loss", {}).get("distill_alpha", 0.0),
+        oracle_ckpt_path=oracle_cfg.get("ckpt_path", None),
     )
     return model
