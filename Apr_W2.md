@@ -54,6 +54,45 @@ M2의 oracle z encoder는 미래 이미지를 보기 때문에 task-discriminati
 
 ---
 
+## 접근법 비교: Distillation vs Contrastive
+
+### Distillation의 근본적 문제
+
+M2 oracle z = `MLP(SigLIP(미래 이미지))` — 미래 시각 정보를 인코딩한 벡터
+VLM z = `PaliGemma(현재 이미지 + 언어)` — 현재 의미 정보를 인코딩한 벡터
+
+두 벡터의 **의미 공간이 다르다.** `||z_vlm - z_oracle||²`을 최소화하면 VLM이 미래 이미지를 암묵적으로 예측하도록 강제되는데, 이는 VLM의 자연스러운 역할이 아니다. z 공간이 oracle 쪽으로 끌려가면서 왜곡될 가능성이 있다.
+
+### Contrastive가 더 강한 이유
+
+```
+InfoNCE loss:
+  Positive: 같은 task, 다른 trajectory
+  Negative: 다른 task
+→ "z가 task를 구분해라" — VLM이 원래 잘 하는 일
+```
+
+- z_shuffle_gap의 정의 자체가 "task 간 구분력" → InfoNCE와 **목적이 동일**
+- 어떤 벡터 공간을 쓸지 VLM이 자유롭게 결정 → 더 자연스러운 representation
+- 논문 스토리: *"z는 task-discriminative하게 설계되어야 한다"* — 더 깔끔한 기여
+
+### Contrastive의 리스크
+
+LIBERO-Object는 task가 10개. Contrastive는 class 수가 많을수록 강하다.
+배치 안에 negative가 충분하지 않으면 학습 신호가 약해질 수 있다.
+
+### 결론: 실험 순서
+
+| 순서 | 실험 | 목적 |
+|------|------|------|
+| M6 | z-Distillation | 빠른 검증 — z_shuffle_gap이 오르는 방향인지 확인 |
+| M7 | z-Contrastive | 더 강한 contribution, paper 핵심 방법론 |
+| M8 | Distill + Contrastive | 최종 모델 |
+
+De-risking 관점에서 Distillation 먼저, Best paper 관점에서 Contrastive가 핵심 기여.
+
+---
+
 ## 이번 주 태스크
 
 ### Day 1 (4/7): M5 진단 문서화 + M6 설계 확정
