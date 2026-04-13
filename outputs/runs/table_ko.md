@@ -316,28 +316,79 @@ MSE (prior):    M2(0.477)   <  M1(0.553)  <  M5(0.608)  <  M3(0.632) < M4(0.654)
 
 ---
 
-## 11. 앞으로의 방향 (M5 LatentVLA)
+## 11. 앞으로의 방향
 
-```
-[카메라 이미지 + 언어 지시 + 관절 상태]
-            ↓
-   [ 시스템 2: PaliGemma-3B VLM ]
-    수십억 파라미터의 언어+시각 이해로
-    "무엇을 해야 하나" 계획 생성
-            ↓
-        z (VLM이 만든 계획 벡터)
-            ↓
-   [ 시스템 1: StochFlowPrior (M4) ]
-    z를 받아 빠르게 행동 생성
-            ↓
-      관절 각도 시퀀스
-```
+M5 실험 결과를 바탕으로 두 가지 과제가 명확해졌습니다.
 
-VLM이 가진 풍부한 언어/시각 이해로 z를 만들면, M2의 "oracle z" 수준에 도달할 수 있다는 것이 우리의 핵심 가설입니다.
+**과제 1: VLM z의 z_shuffle_gap이 M4보다 낮은 이유 규명**
+- plan token이 작업 구분 정보를 충분히 포착하지 못할 가능성
+- VLM fine-tuning 없이 frozen 상태로 z를 추출한 것이 원인일 수 있음
+
+**과제 2: RQ3 미수행 — z 추출 방식 비교 실험 필요**
+- 현재 M5는 plan token 방식 하나만 실험됨
+- last_token / mean_pool / plan_token 세 방식의 직접 비교 필요
 
 ---
 
-## 12. 실험 디렉토리
+## 12. 다음 실험 계획 (우선순위 순)
+
+### Step 1. M5 ablation — RQ3 검증 (즉시 실행 가능)
+
+| 실험 ID | 모델 | z 추출 방식 | 목적 |
+|---------|------|------------|------|
+| M5-last | VLM + SFP | last token (기본 VLM 출력) | 베이스라인 |
+| M5-mean | VLM + SFP | mean pool (전체 토큰 평균) | 정보 분산 효과 |
+| M5-plan | VLM + SFP | plan token (현재 M5) | 현 결과 재확인 |
+
+**목표 지표:** z_shuffle_gap이 M4(0.043)를 넘는 방식 확인
+
+**커맨드 참고:**
+```bash
+# M5-last
+torchrun --nproc_per_node=<N> train.py --config configs/vlm_sfp_last.yaml
+
+# M5-mean
+torchrun --nproc_per_node=<N> train.py --config configs/vlm_sfp_mean.yaml
+```
+
+---
+
+### Step 2. VLM fine-tuning 실험 — RQ2 본격 검증
+
+현재 M5는 PaliGemma frozen 상태. VLM을 task-specific하게 fine-tune하면 z_shuffle_gap이 개선될 것으로 예상.
+
+**방향:**
+- z 추출 레이어에 contrastive loss 추가 (작업이 다른 샘플의 z는 멀어지도록)
+- 또는 VLM last N layer unfreeze 후 end-to-end 학습
+
+**성공 기준:** z_shuffle_gap > M4(0.043), 이상적으로 > 0.2 수준
+
+---
+
+### Step 3. 실제 로봇 평가 — H1 검증 (크리티컬)
+
+현재 모든 평가는 MSE 기반. 실제 로봇 성공률 없이는 논문 주장(H1) 검증 불가.
+
+| 모델 | z_shuffle_gap | 예상 성공률 | 비고 |
+|------|:------------:|:-----------:|------|
+| M1 FlatFlow       | —      | 베이스라인 | |
+| M2 DetLatent      | 0.784  | 최고 예상  | oracle z |
+| M4 StochFlowPrior | 0.043  | M2보다 낮음 | |
+| M5 VLM SFP Plan   | 0.016  | M4와 유사? | 확인 필요 |
+
+**H1 검증 조건:** z_shuffle_gap 순서와 실제 성공률 순서가 일치하면 → "z 품질이 행동 품질을 결정한다" 입증
+
+---
+
+### Step 4. 장기 학습 (200ep) — 현재 결과가 수렴 전일 가능성
+
+M4, M5 모두 100ep에서 z_shuffle_gap이 낮음. 학습이 더 필요한지 곡선으로 확인 후 결정.
+
+**조건:** Step 1 ablation 후 최선 방식만 선택해 장기 학습 실행
+
+---
+
+## 13. 실험 디렉토리
 
 | 실험 | 경로 |
 |------|------|
