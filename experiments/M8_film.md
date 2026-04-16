@@ -1,4 +1,4 @@
-# M8: VLM SFP Plan + FiLM z-Modulation
+# M8: VLM SFP Plan + FiLM z-Modulation + CFG z-Dropout
 
 ## 1. 실험 메타
 
@@ -6,7 +6,7 @@
 |------|------|
 | **날짜** | 2026-04-16 |
 | **베이스** | M7 (VLM SFP + InfoNCE Balanced) |
-| **목적** | z를 side information(concat)에서 computation modulator(FiLM)로 전환해 decoder의 z 의존성을 구조적으로 보장 |
+| **목적** | z를 side information(concat)에서 computation modulator(FiLM)로 전환 + CFG z-dropout으로 z 의존성을 구조적으로 보장 |
 | **상태** | 🔴 설계 완료, 학습 미실행 |
 | **출력 경로** | `outputs/runs/vlm_sfp_film_20260416/` |
 
@@ -43,7 +43,7 @@ z가 각 residual block의 스케일·오프셋을 직접 결정
 
 ---
 
-## 3. 핵심 아이디어: FiLM-style z modulation
+## 3. 핵심 아이디어 1: FiLM-style z modulation
 
 ### 기본 FiLM 수식
 
@@ -71,7 +71,61 @@ nn.init.zeros_(film_mlp[-1].bias[hidden:])  # beta 부분  → 0
 
 ---
 
-## 4. 구조 변경 상세
+## 4. 핵심 아이디어 2: Classifier-Free Guidance (CFG) z-Dropout
+
+### 본질
+Stable Diffusion CFG에서 차용.
+학습 시 일정 확률로 z를 null vector로 대체 → decoder가 "z 있을 때"와 "없을 때" 모두 학습.
+FiLM이 구조적으로 z를 강제한다면, CFG는 **z 유무의 차이를 명시적으로 학습**시키는 것.
+
+```
+train:  p=0.1 확률로 z → null_z (zeros 또는 learnable null token)
+        → decoder: z 없으면 평균적 행동, z 있으면 task-specific 행동
+inference: z 그대로 사용 (optional: guidance scale w로 z 영향 증폭)
+```
+
+### FiLM과의 시너지
+
+- FiLM: z가 각 block 연산을 바꾸는 구조적 binding
+- CFG dropout: z 없을 때를 경험하게 해서 z 의존성을 loss-level에서도 강화
+
+둘이 다른 축으로 z dependency를 키움. 독립적으로 작동하므로 ablation도 가능.
+
+### 구현 포인트
+
+```python
+# compute_loss 내부 (stoch_latent_flow_prior.py)
+if self.training and cfg_dropout_p > 0:
+    mask = torch.rand(B, device=z.device) < cfg_dropout_p   # (B,)
+    z_input = z.clone()
+    z_input[mask] = self.null_z                              # learnable null token
+else:
+    z_input = z
+
+loss_action = film_flow_matching_loss(self.action_flow, actions, cond=context, z=z_input)
+```
+
+`null_z`: `nn.Parameter(torch.zeros(z_dim))` — 학습되는 null 벡터.
+
+### Hyperparameter
+
+| 파라미터 | 값 | 비고 |
+|---------|:--:|------|
+| `cfg_dropout_p` | **0.1** | 10% 확률로 z drop |
+| `null_z` | learnable zeros | zeros로 초기화, 학습됨 |
+
+### 추론 시 Guidance Scale (선택적)
+
+```python
+# 추론 시 z sensitivity 증폭 가능
+z_guided = null_z + w * (z - null_z)   # w=1: 기본, w>1: z 영향 증폭
+```
+
+현재는 w=1로 고정, 추후 ablation 가능.
+
+---
+
+## 5. 구조 변경 상세
 
 ### 현재 vs M8 아키텍처
 
@@ -96,13 +150,13 @@ ctx → input_proj → Block_0 → Block_1 → Block_2 → Block_3 → output
 
 ---
 
-## 5. 구현 범위
+## 6. 구현 범위
 
 | 파일 | 변경 내용 |
 |------|----------|
 | `models/flow_utils.py` | `FiLMResidualBlock`, `FiLMVelocityMLP` 추가 |
-| `models/stoch_latent_flow_prior.py` | `action_flow`를 `FiLMVelocityMLP`로 교체, z 전달 방식 변경 |
-| `configs/vlm_paligemma_film.yaml` | M7 기반, `use_film_z: true` 추가 |
+| `models/stoch_latent_flow_prior.py` | `action_flow`를 `FiLMVelocityMLP`로 교체, CFG dropout + `null_z` 추가 |
+| `configs/vlm_paligemma_film.yaml` | M7 기반, `use_film_z: true`, `cfg_dropout_p: 0.1` 추가 |
 
 `latent_vla.py`, `trainer_vlm.py` — **변경 없음**
 
@@ -215,10 +269,12 @@ x = euler_integrate_film(self.action_flow, context, z, self.x_dim, steps)
 | `use_film_z` | False | **True** | 핵심 변경 |
 | `film_start_block` | — | **1** | block 0 제외 |
 | `alpha` 초기값 | — | **0.1** | learnable, per-block |
-| `infonce_weight` | 0.01 | **0.0** | FiLM이 z binding 담당, InfoNCE 제거 |
+| `infonce_weight` | 0.01 | **0.0** | FiLM + CFG가 z binding 담당, InfoNCE 제거 |
+| `cfg_dropout_p` | — | **0.1** | 10% 확률로 z → null_z |
+| `null_z` | — | learnable zeros | CFG null 벡터 |
 | 나머지 | M7과 동일 | — | — |
 
-> InfoNCE 제거 이유: FiLM이 구조적으로 z를 강제하므로 loss-level 추가 불필요. 변수 격리.
+> InfoNCE 제거 이유: FiLM + CFG가 구조적/학습적으로 z 의존성을 담당. 변수 격리.
 
 ---
 
@@ -228,8 +284,9 @@ x = euler_integrate_film(self.action_flow, context, z, self.x_dim, steps)
 |------|:----:|------|
 | z_shuffle_gap ↑ | **> 0.043** | M4 수준 초과 |
 | action_mse_prior ↓ | **≤ 0.608** | M5 수준 유지 |
-| z-drop 민감도 | **MSE 증가** | z=0 대체 시 성능 하락 확인 |
+| z-drop 민감도 | **MSE 증가** | z=null_z 대체 시 성능 하락 확인 |
 | alpha 수렴값 | **> 0.1** | 학습 후 modulation이 실제로 커졌는지 |
+| CFG gap | **mse_no_z > mse_with_z** | dropout 학습이 z dependency를 키웠는지 |
 
 ---
 
@@ -259,6 +316,7 @@ x = euler_integrate_film(self.action_flow, context, z, self.x_dim, steps)
 | FiLM이 task-unrelated noise 학습 | z intervention test로 조기 감지 |
 | prior flow 불안정 (prior는 FiLM 없음) | prior_flow는 기존 VelocityMLP 유지 |
 | M7 대비 파라미터 증가 | ZEncoder + FiLM MLP → 약 +1M params, 허용 범위 |
+| CFG dropout p 너무 크면 학습 불안정 | p=0.1 고정, 변경 필요 시 0.05로 낮춤 |
 
 ---
 
