@@ -185,14 +185,27 @@ def build_vlm_datasets(cfg: dict):
 
 def build_dataloaders_vlm(train_ds, val_ds, cfg: dict, rank: int = 0, world_size: int = 1):
     from torch.utils.data import DistributedSampler
+    from data.task_balanced_sampler import TaskBalancedSampler
     data_cfg  = cfg["data"]
     train_cfg = cfg["training"]
     is_ddp = world_size > 1
 
-    train_sampler = (
-        DistributedSampler(train_ds, num_replicas=world_size, rank=rank, shuffle=True, drop_last=True)
-        if is_ddp else None
-    )
+    if data_cfg.get("use_task_balanced_sampler", False):
+        train_sampler = TaskBalancedSampler(
+            dataset=train_ds,
+            num_tasks_per_batch=data_cfg.get("num_tasks_per_batch", 4),
+            samples_per_task=data_cfg.get("samples_per_task", 4),
+            rank=rank,
+            world_size=world_size,
+            seed=train_cfg.get("seed", 42),
+        )
+    elif is_ddp:
+        train_sampler = DistributedSampler(
+            train_ds, num_replicas=world_size, rank=rank, shuffle=True, drop_last=True
+        )
+    else:
+        train_sampler = None
+
     train_loader = DataLoader(
         train_ds, batch_size=train_cfg["batch_size"],
         shuffle=(train_sampler is None),

@@ -80,7 +80,7 @@ def load_model(checkpoint_path: str, device: torch.device,
         )
 
     train_ds, val_ds = build_vlm_datasets(cfg)
-    _, val_loader = build_dataloaders_vlm(train_ds, val_ds, cfg)
+    _, val_loader, _ = build_dataloaders_vlm(train_ds, val_ds, cfg)
 
     model = build_vlm_model(cfg, action_dim=train_ds.action_dim,
                             proprio_dim=train_ds.proprio_dim)

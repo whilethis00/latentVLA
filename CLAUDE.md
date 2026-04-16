@@ -3,7 +3,8 @@
 - 실험 결과는 `experiments/` 폴더에 저장, `experiments.md`에 기록
 - 새 config는 기존 yaml 복사 후 수정
 - screen 세션으로 장시간 학습 실행
-- 학습은 항상 DDP (torchrun) 기본
+- 학습은 항상 DDP 기본 — `torchrun` 대신 `python -m torch.distributed.run` 사용 (Singularity 환경에서 torchrun이 base conda를 잡는 문제 회피)
+- 실행 커맨드는 항상 한 줄로 제공
 - GPU walltime 72시간 제한 → 끊기면 재실행만 하면 latest.pt에서 자동 resume
 - best 체크포인트: `best_ep{epoch:03d}.pt` (최신 1개만 유지)
 - 학습 그래프: `save_interval`마다 `curve_ep{epoch}.png` 자동 저장
@@ -31,3 +32,20 @@
   5. 결과 해석 및 인사이트 (긍정적 / 주의)
   6. 다음 스텝
   7. 저장 파일 목록
+
+## 분석 결과 정리 규칙
+
+학습 run이 아닌 분석(eval, ablation, visualization 등)은 `outputs/analyses/<name>_<YYYYMMDD>/`에 저장한다.
+
+```
+outputs/
+├── runs/          ← 학습 run (torchrun으로 실행한 것)
+└── analyses/      ← 분석 (기존 체크포인트 기반 eval, 시각화 등)
+    └── <name>_<YYYYMMDD>/
+        ├── <analysis>.png
+        ├── <analysis>_report.md
+        └── <analysis>_summary.json
+```
+
+- 분석 스크립트의 기본 `out_dir`은 `outputs/analyses/<name>_<YYYYMMDD>/`로 설정
+- 분석명은 `z_analysis_m5`, `tsne_compare`, `shuffle_ablation` 등 내용을 반영
