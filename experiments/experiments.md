@@ -10,6 +10,8 @@
 | M6 | VLM SFP + InfoNCE | ✓ 완료 | M5 + z-InfoNCE loss (λ=0.1) | [M6_infonce.md](M6_infonce.md) |
 | M7 | VLM SFP + InfoNCE Balanced | 🟡 학습 중 | M6 + λ=0.01 + Task-Balanced Sampler | [M7_infonce_balanced.md](M7_infonce_balanced.md) |
 | M8 | VLM SFP + FiLM z-Modulation | 🔴 설계 완료 | z concat → FiLM per-block modulation | [M8_film.md](M8_film.md) |
+| M9-1 | Soft VQ (Commitment Loss) | 🔴 설계 완료 | continuous z + prototype commitment | [M9_vq.md](M9_vq.md) |
+| M9-2 | Hard VQ (Discrete Binding) | 🔴 설계 완료 | discrete code index + VQ prior | [M9_vq.md](M9_vq.md) |
 
 ## 핵심 지표 요약
 
