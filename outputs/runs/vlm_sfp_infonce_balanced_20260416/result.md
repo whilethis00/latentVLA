@@ -134,54 +134,63 @@ S2 진입 시점에 동시에 급락하고 이후 회복하지 못함.
 
 ### 두 가지 구조적 원인
 
-#### 원인 1: z_star.detach() — posterior z가 action loss로 학습되지 않는다
+#### 원인 1: 두 개의 detach — 성격이 다르다
 
-`stoch_latent_flow_prior.py` `compute_loss()`를 보면:
+`stoch_latent_flow_prior.py compute_loss()`에 detach가 두 군데 있다:
 
 ```python
-# line 115
+# [A] line 115 — action branch detach
 action_cond = torch.cat([context, z_star.detach()], dim=-1)
 loss_action = flow_matching_loss(self.action_flow, actions, action_cond)
 
-# line 122
+# [B] line 122 — prior target detach
 loss_prior = flow_matching_loss(self.prior_flow, z_star.detach(), _planner)
 
-# line 128 — grad가 z_star로 오는 건 이것뿐
-pred_future = self.semantic_head(z_star)
-loss_semantic = 1 - cosine_sim(pred_future, future_feat)
+# grad가 z_star로 오는 건 아래 둘뿐
+loss_semantic = 1 - cosine_sim(semantic_head(z_star), future_feat)  # line 128
+# + InfoNCE (latent_vla.py에서 _z_star로)
 ```
 
-`z_star.detach()`가 두 군데 있다. action loss와 prior loss 모두 posterior encoder로 gradient를 주지 않는다. z_star를 학습시키는 것은 **semantic future loss(cosine sim)와 InfoNCE뿐**이다.
+**[A]와 [B]는 전혀 다른 실험이다.**
 
-결과: posterior z는 "미래 이미지와 비슷한 z"와 "task를 구분하는 z"가 되도록 학습되지만, **"action을 잘 예측하는 z"가 되도록 강제되지 않는다.** z가 action-sufficient하지 않아도 학습이 수렴한다.
+- **[A] action detach 제거**: posterior z가 action loss를 직접 받음. z가 "action을 잘 예측하는 z"가 되도록 학습. → 이것이 1차 수술 대상.
 
-이것이 `prior_posterior_gap`이 낮은 진짜 원인이다. M2 비교:
+- **[B] prior target detach 제거**: prior flow가 moving target(posterior z)을 쫓게 됨. prior와 posterior가 동시에 흔들리는 moving target 문제 발생 가능. → 안정성이 검증된 후 마지막에 시도.
 
+현재 posterior z를 학습시키는 gradient는 semantic loss(cosine sim to future image)와 InfoNCE뿐이다. z가 action-sufficient한지와 무관하게 학습이 수렴하는 구조다.
+
+M2와의 차이:
 ```
-M2: posterior MSE=0.0017 — oracle z가 action을 거의 완벽히 예측
-M7: posterior MSE=0.538  — 미래 정보가 있어도 action 예측 못 함
+M2: posterior z = MLP(future_image) → action loss가 이 z로 흐름 → action-sufficient z
+M7: posterior z → [A] detach → action loss gradient 차단 → action-blind z
 ```
 
-M2는 posterior z가 미래 이미지에서 직접 만들어지고, action loss가 그 z로 흐른다. M7은 detach 때문에 posterior z가 action에 대해 blind하다. 따라서 "prior가 posterior를 잘 모방해서 gap이 줄었다"가 아니라 **둘 다 action에 약한 latent가 되어 비슷한 수준에서 수렴**한 것이다.
+따라서 `posterior MSE=0.538`은 "prior가 posterior를 잘 못 따라가서"가 아니라, **posterior z 자체가 action에 약하기 때문**이다. 둘 다 action-weak latent 수준에서 수렴하니 gap이 자연히 작아진다.
 
-#### 원인 2: concat 구조 — decoder가 z를 무시할 수 있다
+#### 원인 2: concat 구조 — decoder가 z를 회피할 수 있다
 
 ```python
-action_cond = cat([context, z_star.detach()])
-h = input_proj(cat([x_t, t_emb, cond]))  # z가 한 번만 섞임
+action_cond = cat([context, z_star.detach()])  # z가 한 번 concat
+h = input_proj(cat([x_t, t_emb, cond]))        # 이후 z 정보 희석 가능
 for block in residual_blocks:
-    h = h + block(h)                     # 이후 z 정보 희석 가능
+    h = h + block(h)                           # z와 무관하게 작동 가능
 ```
 
-`input_proj`에서 z weight를 작게 유지하면 decoder는 z를 무시하고 context만으로 action을 예측할 수 있다. **원인 1로 인해 z 자체가 action-sufficient하지 않으므로**, decoder 입장에서 z에 의존하지 않는 것이 실제로 합리적 선택이다.
+`input_proj`에서 z 축 weight를 작게 만들면 decoder는 z를 무시하고 context만으로 action을 예측할 수 있다. 원인 1로 z 자체가 action-sufficient하지 않으므로, decoder 입장에서 z를 무시하는 것이 locally optimal하다.
 
-InfoNCE는 z 공간의 task 구조를 만들지만, decoder가 z를 실제로 쓰는지는 별개 문제다. z 공간이 task-discriminative해도 decoder가 z를 무시하면 `z_shuffle_gap`은 낮다.
+**FiLM은 이 구조를 깨는 도구다.** 단, FiLM의 가치는 "좋은 z를 더 잘 주입"하는 데 있지, 나쁜 z를 좋은 z로 바꾸는 데 있지 않다. 원인 1을 먼저 고치지 않으면 FiLM은 action-weak z를 더 강하게 주입하는 꼴이 된다.
 
-#### 두 원인의 관계
+#### 두 원인의 직렬 구조
 
-원인 1(detach) → z가 action에 약함 → decoder가 z에 의존할 이유 없음 → 원인 2 강화
+```
+원인 1 (detach) → z가 action에 약함
+         ↓
+decoder가 z에 의존할 이유 없음 → 원인 2 강화
+         ↓
+z_shuffle_gap 낮음, prior_posterior_gap 낮음
+```
 
-FiLM만 넣어도 "action에 약한 z를 더 강하게 주입"하는 꼴이 될 수 있다. **detach를 고치지 않으면 FiLM은 반쪽짜리다.**
+두 개를 같이 해결해야 한다. 하나만 하면 다시 무너진다.
 
 ---
 
@@ -207,29 +216,42 @@ FiLM만 넣어도 "action에 약한 z를 더 강하게 주입"하는 꼴이 될 
 
 ---
 
-### 진짜 해결 순서
+### 진짜 해결 순서 (ablation)
 
-**① z_drop test 먼저**: z=null로 바꿨을 때 MSE가 거의 안 오르면 decoder non-usage 확인. 가설을 빠르게 검증.
+**0. z_drop test**: 현재 ckpt로 z=null 대체 시 action MSE 변화 측정. 거의 안 오르면 decoder non-usage 확인 → 나머지 ablation 필요성 확정.
 
-**② detach 제거**: action loss가 z_star로 직접 흐르게 해야 z가 action-sufficient해진다. 이 없이 FiLM을 넣으면 "약한 latent를 더 강하게 주입"하는 꼴이 된다.
-
+**Ablation A — action branch detach만 제거:**
 ```python
-# 현재 (detach)
+# stoch_latent_flow_prior.py line 115
+# Before:
 action_cond = torch.cat([context, z_star.detach()], dim=-1)
-
-# 수정 (grad 허용)
+# After:
 action_cond = torch.cat([context, z_star], dim=-1)
+# line 122 (prior target) — 유지
+loss_prior = flow_matching_loss(self.prior_flow, z_star.detach(), _planner)
 ```
+prior target은 detach 유지. posterior z가 action loss를 직접 받게만 변경.  
+**성공 기준**: posterior MSE 하락, z_shuffle_gap 상승, z_drop test에서 MSE 변화 커짐.  
+A가 조용하면 → FiLM 넣어도 별 차이 없을 가능성 큼.
 
-주의: detach를 제거하면 posterior가 "action flow loss를 줄이기 쉬운 z"를 만들도록 학습됨. 이게 원하는 방향이지만, 학습 초기 불안정해질 수 있어 gradient clipping이나 weight 조정이 필요할 수 있다.
+**Ablation B — A + FiLM:**
+action-sufficient해진 z를 decoder에 구조적으로 binding.  
+**성공 기준**: A 대비 z_shuffle_gap 추가 상승.
 
-**③ FiLM + CFG**: detach가 고쳐진 상태에서 추가해야 효과를 제대로 볼 수 있다.
+**Ablation C — B + CFG z-dropout:**
+z 유무 차이를 loss-level에서 명시적 학습 신호로 추가.  
+**성공 기준**: z=null 대체 시 MSE gap이 C에서 가장 큼.
 
-| 문제 | M8(s1only) | detach 제거 | FiLM+CFG |
-|------|:----------:|:-----------:|:--------:|
-| z가 action에 약함 | ❌ | ✅ | ❌(단독) |
-| decoder z 무시 가능 | ❌ | △ | ✅ |
-| z dependency 학습 신호 | ❌ | △ | ✅(CFG) |
+**Ablation D — prior target detach 제거 (마지막):**
+prior와 posterior가 동시에 흔들리는 moving target 문제 있음. 개선 실험이 아니라 안정성 테스트.
+
+| 문제 | M8(s1only) | Ablation A | Ablation B | Ablation C |
+|------|:----------:|:----------:|:----------:|:----------:|
+| z가 action에 약함 | ❌ | ✅ | ✅ | ✅ |
+| decoder z 회피 가능 | ❌ | △ | ✅ | ✅ |
+| z dependency 학습 신호 | ❌ | △ | △ | ✅ |
+
+**대안 경로**: action detach 제거 없이 oracle distillation(`distill_alpha`)으로 z 품질을 끌어올린 뒤 FiLM+CFG를 거는 방법도 있다(`latent_vla.py`에 이미 구현되어 있음). 단, decoder non-usage 문제는 여전히 FiLM/CFG가 필요하다.
 
 ---
 
