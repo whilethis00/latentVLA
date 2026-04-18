@@ -13,6 +13,12 @@
 
 각 runs 디렉토리(`outputs/runs/<run_name>/`)에는 반드시 아래 두 파일을 생성한다:
 
+### monitor.png (자동 생성)
+- 학습 완료 시 `VLMTrainer._generate_monitor()`가 자동으로 `scripts/plot_monitor.py`를 실행해 생성
+- M2(DetLatent) 값을 목표 기준선으로 표시: mse_prior=0.4776, mse_posterior=0.0017, z_shuffle_gap=0.7837, prior_posterior_gap=0.4759
+- 중간 확인: `conda run -n vla python3 scripts/plot_monitor.py --run_dir outputs/runs/<name>`
+- `.gitignore`에서 추적 허용 → `git add outputs/runs/<name>/monitor.png`로 push 가능
+
 ### result.png
 - `plot_result.py`를 작성하고 `conda run -n vla python3 plot_result.py`로 생성
 - 포함할 패널:

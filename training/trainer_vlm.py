@@ -225,6 +225,9 @@ class VLMTrainer:
         self.stage2_epoch = self.train_cfg.get("stage2_epoch", 10)
         self.grad_accum = self.train_cfg.get("grad_accum_steps", 4)
         self.semantic_weight = self.loss_cfg.get("semantic_future_weight", 0.1)
+        self.infonce_weight = self.loss_cfg.get("infonce_weight", 0.0)
+        self.infonce_temperature = self.loss_cfg.get("infonce_temperature", 0.07)
+        self.infonce_stage1_only = self.loss_cfg.get("infonce_stage1_only", False)
 
         # Stage 1 optimizer (VLM frozen → non-VLM params만)
         self.optimizer = self._build_stage1_optimizer()
@@ -385,6 +388,25 @@ class VLMTrainer:
             generate(self.output_dir, f"vlm_sfp_{z_form}")
         except Exception as e:
             print(f"[VLMTrainer] result 생성 실패 (무시): {e}")
+        self._generate_monitor()
+
+    def _generate_monitor(self):
+        try:
+            import subprocess, sys, os
+            script = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "scripts", "plot_monitor.py"
+            )
+            result = subprocess.run(
+                [sys.executable, script, "--run_dir", self.output_dir],
+                capture_output=True, text=True
+            )
+            if result.returncode == 0:
+                print(f"[VLMTrainer] monitor.png 생성 완료")
+            else:
+                print(f"[VLMTrainer] monitor.png 생성 실패 (무시): {result.stderr.strip()}")
+        except Exception as e:
+            print(f"[VLMTrainer] monitor.png 생성 실패 (무시): {e}")
 
     # ── Epoch ─────────────────────────────────────────────────────────────────
 
@@ -392,6 +414,13 @@ class VLMTrainer:
         self.model.train()
         accum, n = {}, 0
         self.optimizer.zero_grad()
+
+        # S1-only 모드: Stage 2 이후 InfoNCE 비활성화
+        is_stage1 = epoch < self.stage2_epoch
+        effective_infonce_weight = (
+            self.infonce_weight if (is_stage1 or not self.infonce_stage1_only)
+            else 0.0
+        )
 
         pbar = tqdm(
             self.train_loader, desc=f"Epoch {epoch}", leave=False, dynamic_ncols=True
@@ -403,6 +432,8 @@ class VLMTrainer:
                     batch, self.device,
                     semantic_weight=self.semantic_weight,
                     prior_weight=self.loss_cfg.get("prior_weight", 1.0),
+                    infonce_weight=effective_infonce_weight,
+                    infonce_temperature=self.infonce_temperature,
                 )
 
             loss = loss_dict["total_loss"] / self.grad_accum
