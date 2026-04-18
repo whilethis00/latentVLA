@@ -47,6 +47,7 @@ class StochLatentFlowPrior(nn.Module):
         flow_hidden: int = 512,
         flow_depth: int = 4,
         flow_steps: int = 10,
+        action_detach: bool = True,
     ):
         super().__init__()
         self.action_dim = action_dim
@@ -56,6 +57,8 @@ class StochLatentFlowPrior(nn.Module):
         self.flow_steps = flow_steps
         self.x_dim = action_dim * action_horizon
         self.use_future = future_feat_dim > 0
+        # Ablation A: False → posterior z gets gradient from action loss
+        self.action_detach = action_detach
 
         # Posterior q(z | C_t, a, future) → Gaussian for training target
         posterior_in = context_dim + action_dim * action_horizon
@@ -111,13 +114,15 @@ class StochLatentFlowPrior(nn.Module):
         mu_q, logvar_q = self.posterior_enc(q_in)
         z_star = self.reparameterize(mu_q, logvar_q)
 
-        # 2. Action flow loss (conditioned on z* from posterior) — always uses full context
-        action_cond = torch.cat([context, z_star.detach()], dim=-1)
+        # 2. Action flow loss
+        # Ablation A: action_detach=False → posterior z gets gradient from action loss
+        z_for_action = z_star.detach() if self.action_detach else z_star
+        action_cond = torch.cat([context, z_for_action], dim=-1)
         loss_action = flow_matching_loss(
             self.action_flow, actions.reshape(B, -1), action_cond
         )
 
-        # 3. Latent prior flow loss — conditioned on planner context
+        # 3. Latent prior flow loss — prior target always detached (moving target 방지)
         loss_prior = flow_matching_loss(
             self.prior_flow, z_star.detach(), _planner
         )
@@ -137,12 +142,27 @@ class StochLatentFlowPrior(nn.Module):
             + prior_weight * loss_prior
             + semantic_weight * loss_semantic
         )
+
+        # z 진단 통계 (0-dim scalar, train log에 기록됨)
+        with torch.no_grad():
+            _z_mu_norm    = mu_q.norm(dim=-1).mean()
+            _z_var_mean   = logvar_q.exp().mean()
+            _z_var_std    = logvar_q.exp().std()
+            _z_sample_var = z_star.var(dim=0).mean()
+
         return {
             "total_loss": total,
             "action_flow_loss": loss_action,
             "prior_flow_loss": loss_prior,
             "semantic_future_loss": loss_semantic,
-            "_z_mu": mu_q,  # posterior mean, for distillation (has grad to posterior_enc)
+            # z 진단 (scalar, JSONL에 기록)
+            "_z_mu_norm":    _z_mu_norm,
+            "_z_var_mean":   _z_var_mean,
+            "_z_var_std":    _z_var_std,
+            "_z_sample_var": _z_sample_var,
+            # 2D tensors for distillation / InfoNCE (upstream에서 pop)
+            "_z_mu":   mu_q,
+            "_z_star": z_star,
         }
 
     # ── Inference ─────────────────────────────────────────────────────────

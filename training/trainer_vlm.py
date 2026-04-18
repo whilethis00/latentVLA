@@ -19,7 +19,7 @@ import datetime
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from tqdm import tqdm
 
 from models.latent_vla import LatentVLA
@@ -228,6 +228,13 @@ class VLMTrainer:
         self.infonce_weight = self.loss_cfg.get("infonce_weight", 0.0)
         self.infonce_temperature = self.loss_cfg.get("infonce_temperature", 0.07)
         self.infonce_stage1_only = self.loss_cfg.get("infonce_stage1_only", False)
+        # S2 LR warmup: LoRA LR를 0.1배에서 선형 증가 (0이면 비활성)
+        self.s2_lora_warmup_steps = self.train_cfg.get("s2_lora_warmup_steps", 0)
+
+        action_detach = self.loss_cfg.get("action_detach", True)
+        if not action_detach and self.is_main:
+            print("[VLMTrainer] Ablation A: action_detach=False — "
+                  "posterior z receives gradient from action loss")
 
         # Stage 1 optimizer (VLM frozen → non-VLM params만)
         self.optimizer = self._build_stage1_optimizer()
@@ -341,19 +348,40 @@ class VLMTrainer:
                     print(f"\n[VLMTrainer] === Stage 2 시작 (epoch {epoch}) ===")
                 self.raw_model.system2.enable_lora()
                 self.optimizer = self._build_stage2_optimizer()
-                total_steps = (
+                total_s2_steps = (
                     len(self.train_loader) // self.grad_accum
                     * (self.train_cfg["num_epochs"] - epoch + 1)
                 )
-                self.scheduler = CosineAnnealingLR(
-                    self.optimizer, T_max=total_steps, eta_min=1e-6
-                )
+                if self.s2_lora_warmup_steps > 0:
+                    warmup_sched = LinearLR(
+                        self.optimizer, start_factor=0.1, end_factor=1.0,
+                        total_iters=self.s2_lora_warmup_steps,
+                    )
+                    cosine_sched = CosineAnnealingLR(
+                        self.optimizer,
+                        T_max=max(total_s2_steps - self.s2_lora_warmup_steps, 1),
+                        eta_min=1e-6,
+                    )
+                    self.scheduler = SequentialLR(
+                        self.optimizer,
+                        schedulers=[warmup_sched, cosine_sched],
+                        milestones=[self.s2_lora_warmup_steps],
+                    )
+                    if self.is_main:
+                        print(f"[VLMTrainer] S2 LoRA warmup: {self.s2_lora_warmup_steps} steps")
+                else:
+                    self.scheduler = CosineAnnealingLR(
+                        self.optimizer, T_max=total_s2_steps, eta_min=1e-6
+                    )
 
             train_metrics = self._train_epoch(epoch)
             log_dict = {f"train/{k}": v for k, v in train_metrics.items()}
             log_dict["epoch"] = epoch
 
-            if epoch % self.train_cfg.get("eval_every", 5) == 0:
+            # S2 경계(직전/진입) epoch은 eval_every와 무관하게 강제 평가
+            s2_boundary = epoch in (self.stage2_epoch - 1, self.stage2_epoch)
+            do_eval = (epoch % self.train_cfg.get("eval_every", 5) == 0) or s2_boundary
+            if do_eval:
                 val_metrics = self.evaluator.evaluate(self.val_loader)
                 log_dict.update({f"val/{k}": v for k, v in val_metrics.items()})
                 if self.is_main:
@@ -463,7 +491,8 @@ class VLMTrainer:
         stage = "S2" if epoch >= self.stage2_epoch else "S1"
         msg = f"[{stage} Epoch {epoch:3d}]"
         for k, v in train.items():
-            msg += f"  {k}={v:.4f}"
+            if not k.startswith("_"):  # _z_* 진단 키는 JSONL에만 기록, stdout 출력 제외
+                msg += f"  {k}={v:.4f}"
         if val:
             msg += "  |  VAL:"
             for k, v in val.items():

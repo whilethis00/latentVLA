@@ -47,6 +47,7 @@ class LatentVLA(nn.Module):
         flow_steps: int = 10,
         distill_alpha: float = 0.0,
         oracle_ckpt_path: str = None,
+        action_detach: bool = True,
     ):
         super().__init__()
 
@@ -68,6 +69,7 @@ class LatentVLA(nn.Module):
             flow_hidden=flow_hidden,
             flow_depth=flow_depth,
             flow_steps=flow_steps,
+            action_detach=action_detach,
         )
 
         # OfflineEvaluator 호환용 (기존 코드가 policy.posterior_enc, policy.semantic_head 참조)
@@ -121,12 +123,38 @@ class LatentVLA(nn.Module):
 
     # ── 학습 ──────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _z_infonce_loss(z: torch.Tensor, task_ids: torch.Tensor,
+                        temperature: float = 0.07) -> torch.Tensor:
+        """
+        z_star에 대한 InfoNCE loss.
+        같은 task_id 샘플을 positive pair로, 다른 task_id를 negative로 취급.
+        batch 내에 positive pair가 없는 샘플은 loss 계산에서 제외.
+        """
+        z_norm = F.normalize(z, dim=-1)                                 # (B, D)
+        sim = z_norm @ z_norm.T / temperature                           # (B, B)
+        pos_mask = task_ids.unsqueeze(0) == task_ids.unsqueeze(1)       # (B, B)
+        pos_mask.fill_diagonal_(False)
+
+        has_pos = pos_mask.any(dim=1)
+        if not has_pos.any():
+            return torch.tensor(0.0, device=z.device)
+
+        sim_sel = sim[has_pos]          # (M, B)
+        pos_sel = pos_mask[has_pos]     # (M, B)
+        loss = -torch.log(
+            (sim_sel.exp() * pos_sel).sum(1) / sim_sel.exp().sum(1)
+        ).mean()
+        return loss
+
     def compute_loss(
         self,
         batch: dict,
         device: torch.device,
         semantic_weight: float = 0.1,
         prior_weight: float = None,
+        infonce_weight: float = 0.0,
+        infonce_temperature: float = 0.07,
     ) -> dict:
         """
         batch 키:
@@ -167,7 +195,15 @@ class LatentVLA(nn.Module):
             semantic_weight=semantic_weight,
             prior_weight=prior_weight,
         )
-        z_mu = loss_dict.pop("_z_mu")  # posterior mean (has grad), not logged
+        z_mu   = loss_dict.pop("_z_mu")    # posterior mean, for distillation
+        z_star = loss_dict.pop("_z_star")  # sampled posterior z, for InfoNCE
+
+        # ── z-InfoNCE loss ─────────────────────────────────────────────────
+        if infonce_weight > 0.0 and "task_id" in batch:
+            task_ids = batch["task_id"].to(device)
+            loss_infonce = self._z_infonce_loss(z_star, task_ids, infonce_temperature)
+            loss_dict["infonce_loss"] = loss_infonce
+            loss_dict["total_loss"] = loss_dict["total_loss"] + infonce_weight * loss_infonce
 
         # ── M6 z-Distillation loss ─────────────────────────────────────────
         if self.distill_alpha > 0 and self._oracle_enc is not None and future_feat is not None:

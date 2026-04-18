@@ -263,5 +263,6 @@ def build_vlm_model(cfg: dict, action_dim: int, proprio_dim: int = None):
         flow_steps=mdl_cfg["flow_steps"],
         distill_alpha=cfg.get("loss", {}).get("distill_alpha", 0.0),
         oracle_ckpt_path=oracle_cfg.get("ckpt_path", None),
+        action_detach=cfg.get("loss", {}).get("action_detach", True),
     )
     return model
