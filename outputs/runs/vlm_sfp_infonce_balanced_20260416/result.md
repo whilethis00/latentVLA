@@ -116,24 +116,136 @@ task-balanced sampler로 동일 task pair를 보장했을 때:
 
 ---
 
+## 5.5 z_shuffle_gap / prior_posterior_gap 심층 진단
+
+### 현상 요약
+
+두 지표가 공통으로 보이는 패턴:
+
+```
+ep5 (S1 끝):  z_shuffle_gap=0.094  prior_posterior_gap=0.692  ← 가장 높음
+ep10 (S2 진입): z_shuffle_gap=0.005  prior_posterior_gap=0.162  ← 급락
+ep10~80 (S2):  z_shuffle_gap=0.003~0.016  prior_posterior_gap=0.022~0.049  ← 낮은 수준 유지
+```
+
+S2 진입 시점에 동시에 급락하고 이후 회복하지 못함.
+
+---
+
+### z_shuffle_gap이 낮은 근본 원인
+
+**현재 z 주입 구조:**
+
+```
+action_cond = cat([context, z])          # concat으로 한 번 섞임
+h = input_proj(cat([x_t, t_emb, cond]))  # 이후 z 정보 희석
+for block in residual_blocks:
+    h = h + block(h)                     # z와 무관하게 진행
+```
+
+`input_proj`에서 z weight를 작게 만들면 decoder는 z를 사실상 무시할 수 있다. flow loss 관점에서 z가 없어도 context만으로 충분히 좋은 action을 예측할 수 있다면, **z를 무시하는 것이 locally optimal한 해**다.
+
+**InfoNCE는 z 공간의 구조를 만들지만, decoder가 z를 쓰는지는 다른 문제다.**
+
+- InfoNCE: "z끼리의 거리를 task-discriminative하게" → z 공간 구조에 영향
+- z_shuffle_gap: "decoder가 z에 얼마나 의존하는가" → decoder 내부 동작에 의존
+
+두 objective가 직접 연결되지 않는다. z 공간이 task-discriminative해도 decoder가 z를 무시하면 gap은 낮다.
+
+**S2 급락의 원인:**
+
+S2에서 LoRA가 활성화되면서 VLM(prior z 생성)이 fine-tune됨. VLM이 받는 gradient는 action flow loss에서 오는데, 이 loss는 z가 task-discriminative할 필요 없이 **action을 잘 예측하면 된다.** 결과적으로:
+
+1. VLM z가 action-predictive 방향으로 drift
+2. S1에서 InfoNCE로 형성된 task-discriminative 구조 파괴
+3. S2에서도 InfoNCE가 켜져 있지만, 가중치 λ=0.1 vs action_flow 가중치 1.0 → action flow gradient가 10배 강함
+
+balanced sampler로 positive pair 문제는 해결했지만, gradient 경합의 비대칭성은 해결하지 못했다.
+
+---
+
+### prior_posterior_gap이 낮은 원인
+
+**gap = MSE(prior) - MSE(posterior) = 0.5759 - 0.5381 = 0.038**
+
+이 수치를 "prior가 posterior를 잘 모방했다"고 해석하면 안 된다. M2와 비교하면:
+
+```
+M2: prior=0.4776, posterior=0.0017, gap=0.4759  ← posterior가 oracle 수준
+M7: prior=0.5759, posterior=0.5381, gap=0.038   ← 둘 다 낮은 수준에서 수렴
+```
+
+M7의 gap이 낮은 이유는 **posterior z(미래 이미지 기반)마저도 flow decoder가 충분히 활용하지 못하기 때문**이다. oracle(M2)의 posterior MSE=0.0017은 미래를 알면 거의 완벽한 행동 예측이 가능하다는 의미인데, M7의 posterior MSE=0.538은 미래 정보가 있어도 decoder가 그것을 행동으로 연결하지 못하는 상태를 나타낸다.
+
+즉 prior와 posterior 모두 flow decoder에서 z가 충분히 활용되지 않아, 둘 다 비슷하게 낮은 MSE 수준에서 수렴하면서 gap이 자연히 작아진 것이다.
+
+---
+
+### M8(infonce_stage1_only)이 해결할 수 있는가
+
+현재 실행 중인 M8은 **S2에서 InfoNCE를 끄는** 변형이다. 이 접근의 예측:
+
+**해결 가능한 부분:**
+- S2에서 InfoNCE-flow loss 경합이 사라짐 → z가 두 방향으로 동시에 당겨지는 문제 제거
+- flow loss gradient만 남아 학습이 더 안정적일 수 있음
+
+**해결하기 어려운 부분:**
+- **근본 원인 미해결**: decoder가 z를 concat으로 받아 무시할 수 있는 구조는 그대로
+- S2에서 LoRA로 VLM이 fine-tune될 때 z가 action-predictive 방향으로 drift하는 것은 여전히 발생
+- S1에서 형성한 z 구조가 S2 flow loss에 의해 파괴되는 패턴은 반복될 가능성이 높음
+
+**예상 결과:** ep5~9 구간 z_shuffle_gap이 M7 수준(~0.09)으로 나타났다가 ep10 S2 진입 후 다시 급락. M7과 정성적으로 유사한 패턴을 보일 것으로 예상.
+
+---
+
+### 진짜 해결책: M8(FiLM + CFG)
+
+`experiments/M8_film.md`에 설계된 진짜 M8이 이 문제를 정공법으로 공략한다.
+
+**FiLM (Feature-wise Linear Modulation):**
+```
+z → ZEncoder → z_feat
+z_feat → γ_l, β_l (per-block scale/shift)
+h_l' = γ_l ⊙ h_l + β_l
+```
+z가 각 residual block의 연산을 직접 변조 → z를 무시하는 것이 구조적으로 불가능.
+
+**CFG z-Dropout:**
+```
+p=0.1 확률로 z → null_z
+decoder: "z 없으면 평균적 행동, z 있으면 task-specific 행동"을 explicit하게 학습
+```
+z 유무의 차이를 loss-level에서 명시적으로 학습시킴 → z_shuffle_gap이 올라갈 직접적인 학습 신호.
+
+| 문제 | 현재 M6~M8(s1only) | M8(FiLM+CFG) |
+|------|:-----------------:|:------------:|
+| decoder z 무시 | ❌ 구조적으로 가능 | ✅ 구조적으로 불가 |
+| z dependency 학습 신호 | ❌ 없음 | ✅ CFG dropout |
+| InfoNCE-flow 경합 | △ M8 s1only에서 S2 제거 | ✅ InfoNCE 제거 |
+| S2 z 구조 파괴 | ❌ 여전히 발생 가능 | △ FiLM이 완화 |
+
+---
+
 ## 6. 다음 스텝
 
-### 오프라인 eval (미완)
-- [ ] ckpt_80.pt eval
-- [ ] 중간 체크포인트 (ckpt_30~ckpt_70) z_shuffle_gap 피크 구간 eval
+### 현재 진행 중
+- M8(infonce_stage1_only): `outputs/runs/vlm_sfp_infonce_s1only_20260418/` — single GPU 학습 중 (4/20 새벽 완료 예정)
+  - 검증 포인트: ep10 전후 z_shuffle_gap이 M7처럼 급락하는지 여부
 
-### 분석
-- [ ] z_shuffle_gap 진동 원인 분석 — batch 구성에 따른 val metric 변동성인지 실제 z 구조 불안정인지 구분
-- [ ] sampling_diversity 감소 원인 — z collapse 진행 중인지, prior가 단일 모드로 수렴 중인지
+### M8(FiLM+CFG) 실행 전 체크리스트
+- [ ] `models/flow_utils.py` — `FiLMResidualBlock`, `FiLMVelocityMLP` 구현
+- [ ] `models/stoch_latent_flow_prior.py` — FiLM 교체, CFG dropout 추가
+- [ ] `configs/vlm_paligemma_film.yaml` 작성
+- [ ] smoke test: z→null_z 대체 시 MSE 변화 확인 (z_drop test)
 
-### M8 방향 후보
-- temperature 조정 (0.07 → 0.1~0.2): 현재 temperature가 너무 낮아 logit saturation 가능성
-- λ 스케줄링: 초반 λ=0.1로 z 구조 형성 후 후반 감소 → flow loss와 경합 완화
-- InfoNCE 대신 supervised contrastive loss (task label 활용)
+### 분석 (M8 s1only 완료 후)
+- [ ] ep5~15 z_shuffle_gap 추이 — M7 패턴 반복인지 확인
+- [ ] sampling_diversity 감소 원인 분석
 
 ---
 
 ## 7. 저장 파일 목록
+
 
 ```
 outputs/runs/vlm_sfp_infonce_balanced_20260416/
