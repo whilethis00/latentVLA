@@ -8,10 +8,11 @@
 | M4 | StochFlowPrior | ✓ 완료 | Flow-based prior z | `outputs/runs/sfp_100ep_20260401/` |
 | M5 | VLM SFP Plan | ✓ 완료 | VLM plan token z | `outputs/runs/vlm_sfp_plan_100ep_20260405/` |
 | M6 | VLM SFP + InfoNCE | ✓ 완료 | M5 + z-InfoNCE loss (λ=0.1) | [M6_infonce.md](M6_infonce.md) |
-| M7 | VLM SFP + InfoNCE Balanced | 🟡 학습 중 | M6 + λ=0.01 + Task-Balanced Sampler | [M7_infonce_balanced.md](M7_infonce_balanced.md) |
-| M8 | VLM SFP + FiLM z-Modulation | 🔴 설계 완료 | z concat → FiLM per-block modulation | [M8_film.md](M8_film.md) |
-| M9-1 | Soft VQ (Commitment Loss) | 🔴 설계 완료 | continuous z + prototype commitment | [M9_vq.md](M9_vq.md) |
-| M9-2 | Hard VQ (Discrete Binding) | 🔴 설계 완료 | discrete code index + VQ prior | [M9_vq.md](M9_vq.md) |
+| M7 | VLM SFP + InfoNCE Balanced | ✓ 완료 | M6 + λ=0.01 + Task-Balanced Sampler | [M7_infonce_balanced.md](M7_infonce_balanced.md) |
+| M8 | VLM SFP + InfoNCE S1 Only | ✓ 완료 (ep92, walltime 초과) | S1 data only + infonce_stage1_only=True | `outputs/runs/vlm_sfp_infonce_s1only_20260418/` |
+| M9 | VLM SFP + InfoNCE S1+S2 | 🔴 설계 완료 | M8 + infonce_stage1_only=False | [M9_infonce_s2.md](M9_infonce_s2.md) |
+| (보류) M8-FiLM | VLM SFP + FiLM z-Modulation | ⏸ 보류 | z-space 수축 해결 후 검토 | [M8_film.md](M8_film.md) |
+| (보류) M9-VQ | Soft/Hard VQ Binding | ⏸ 보류 | representation 먼저 살린 뒤 검토 | [M9_vq.md](M9_vq.md) |
 
 ## 핵심 지표 요약
 
@@ -24,6 +25,10 @@
 | M5 VLM SFP Plan | 0.6084 | 0.5318 | 0.0163 | 0.0766 |
 | M6 VLM + InfoNCE (ckpt_10) | 1.2946 | 1.1883 | 0.0537 | 0.1063 |
 | M6 VLM + InfoNCE (ckpt_20) | 0.8588 | 0.8168 | 0.0268 | 0.0420 |
-| M7 VLM + InfoNCE Balanced | — | — | — | — |
+| M7 VLM + InfoNCE Balanced (ep100) | 0.5694 | 0.5252 | 0.0047 | 0.0442 |
+| M8 VLM + InfoNCE S1 Only (ep90) | 0.5120 | 0.4606 | 0.0086 | 0.0514 |
+| M9 VLM + InfoNCE S1+S2 | — | — | — | — |
 
-M6: ckpt_10과 ckpt_20이 z 구조 vs prior 품질 트레이드오프. M7에서 동시 달성 목표.
+**M8 판결 실험 결과 (2026-04-21)**: `z_mu_var_mean=0.0345`, `delta_null=+0.225`, `probe_ratio=0.919`
+→ posterior→decoder 경로는 살아 있음. z-space 수축 + prior-posterior mismatch가 주원인.
+→ M9 방향: representation 먼저, binding(FiLM/VQ)은 그 다음.

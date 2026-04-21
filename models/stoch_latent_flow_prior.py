@@ -146,6 +146,7 @@ class StochLatentFlowPrior(nn.Module):
         # z 진단 통계 (0-dim scalar, train log에 기록됨)
         with torch.no_grad():
             _z_mu_norm    = mu_q.norm(dim=-1).mean()
+            _z_mu_var     = mu_q.var(dim=0).mean()   # z-space 수축 추적용 (M9+)
             _z_var_mean   = logvar_q.exp().mean()
             _z_var_std    = logvar_q.exp().std()
             _z_sample_var = z_star.var(dim=0).mean()
@@ -157,6 +158,7 @@ class StochLatentFlowPrior(nn.Module):
             "semantic_future_loss": loss_semantic,
             # z 진단 (scalar, JSONL에 기록)
             "_z_mu_norm":    _z_mu_norm,
+            "_z_mu_var":     _z_mu_var,
             "_z_var_mean":   _z_var_mean,
             "_z_var_std":    _z_var_std,
             "_z_sample_var": _z_sample_var,
