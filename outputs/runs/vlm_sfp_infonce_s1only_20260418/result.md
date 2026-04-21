@@ -287,7 +287,7 @@ z_shuffle_gap과 함께 epoch마다 찍어놓으면, 언제 z-space가 수축하
 
 ---
 
-### 다음 한 단계
+### 다음 한 단계 (판결 전 예상)
 
 M9 설계를 먼저 하지 않는다.
 FiLM, VQ, CFG, temperature 튜닝 — 이것들을 먼저 올리지 않는다.
@@ -303,11 +303,84 @@ z_mu_var_mean = mu_q.var(dim=0).mean()
 이 숫자가 낮으면 → z-space 먼저 살리는 방향으로 M9 설계  
 이 숫자가 높으면 → binding 강화 방향으로 M9 설계
 
-가능하면 같이 뽑으면 좋은 것:
-- `z_mu_norm_mean = mu_q.norm(dim=-1).mean()` — z의 크기가 얼마나 되는가
-- `z_var_mean = exp(logvar_q).mean()` — posterior의 분산이 얼마나 퍼져 있는가
+---
 
-단 진짜 최소셋만 원하면 `z_mu_var_mean` 하나로 충분히 방향을 정할 수 있다.
+### 판결 실험 결과 (2026-04-21, ckpt_90.pt, max_batches=50, N=800)
+
+실행 커맨드:
+```bash
+conda run -n vla python3 scripts/eval_z_diag.py \
+    --checkpoint outputs/runs/vlm_sfp_infonce_s1only_20260418/ckpt_90.pt \
+    --max_batches 50
+```
+
+#### 결과 수치
+
+| 지표 | 값 | 의미 |
+|------|-----|------|
+| `z_mu_var_mean` | **0.0345** | posterior z의 배치 내 분산 (0.1 이하 = 수축) |
+| `z_sample_var`  | 0.0345    | z 샘플의 분산 (mu_var와 거의 동일 → noise 기여 미미) |
+| `delta_null`    | **+0.2255** | posterior z를 zeros로 교체 시 MSE 상승량 |
+| `delta_shuffle` | +0.1112   | posterior z를 배치 내 셔플 시 MSE 상승량 |
+| `probe_ratio`   | 0.9198    | same-task / random 거리 비율 (1에 가까울수록 task 구분 없음) |
+
+참고: `z_shuffle_gap`(= 0.0086)은 **prior z** 셔플 기준이고, `delta_null`/`delta_shuffle`은 **posterior z** 교체 기준이다. 두 숫자가 측정하는 경로가 다르다.
+
+#### 판정: 케이스 C
+
+> posterior 약함, decoder는 z 쓰려 함 → **posterior/encoder 강화 우선**
+
+---
+
+#### 결과 해석
+
+세 숫자를 같이 읽어야 한다.
+
+**posterior → decoder 경로는 살아 있다.**
+
+`delta_null = +0.2255`는 posterior z를 zeros로 바꿨을 때 MSE가 0.225나 오른다는 뜻이다.
+이건 decoder가 posterior z를 실제로 사용하고 있다는 직접 증거다.
+이전에 `z_shuffle_gap`만 보고 "decoder가 z를 안 쓴다"고 해석한 것은 틀렸다.
+
+**prior → decoder 경로는 죽어 있다.**
+
+`z_shuffle_gap = 0.0086`은 prior flow가 뽑은 z를 셔플해도 MSE가 거의 안 변한다는 뜻이다.
+inference time에 prior로 샘플링한 z는 decoder가 거의 무시한다.
+즉 문제는 decoder가 z를 안 쓰는 게 아니라, **prior z가 decoder가 기대하는 공간에 없다**는 것이다.
+
+**posterior z 자체가 수축됐다.**
+
+`z_mu_var_mean = 0.0345`는 posterior z가 샘플마다 거의 같은 값이라는 뜻이다.
+decoder가 z를 쓰긴 쓰는데, 그 z가 상황마다 별로 다르지 않다.
+`probe_ratio = 0.92`도 같은 신호다 — 같은 task 내 샘플들의 z 거리가 random pair와 거의 같다는 건, z가 task나 미래 정보를 거의 담지 못하고 있다는 뜻이다.
+
+#### 왜 prior_flow_loss가 epoch 20 이후 역증가했는가
+
+이 구조로 설명된다.
+
+1. posterior z가 좁은 공간으로 수축한다
+2. prior flow는 그 수축된 분포를 따라가야 하는데, 수축이 계속될수록 타겟 분포 자체가 불안정해진다
+3. prior flow가 따라가기 점점 더 어려워지면서 loss가 다시 올라간다
+4. 결국 inference time의 prior z는 posterior z가 있는 좁은 공간에서 벗어나게 되고, decoder는 그 prior z를 무시하는 게 합리적이 된다
+
+**한 줄 요약:**
+posterior z가 수축해서 diversity가 없어졌고, prior flow는 그 수축된 분포를 제대로 못 따라가고 있다.
+decoder는 posterior z를 쓰고 싶어하지만, 그 z에 담긴 정보가 부족하다.
+
+---
+
+#### 다음 실험 방향
+
+posterior z가 수축한 게 주원인이므로, **z-space를 먼저 살리는 것**이 우선이다.
+FiLM이나 CFG는 그 다음이다 — z가 펴지지 않으면 binding을 강화할 공간 자체가 없다.
+
+구체적으로 검토할 방향:
+- posterior z가 왜 수축하는가 — semantic_weight, InfoNCE temperature, posterior encoder capacity 점검
+- z-space를 펴는 방법 — KL-like regularizer, z spread loss, contrastive objective 강화
+- prior flow가 posterior를 더 잘 따라가게 하는 방법 — prior 학습 안정성 개선
+
+그리고 다음 실험부터는 **`z_mu_var_mean`을 train loop에서 주기적으로 기록**해야 한다.
+z_shuffle_gap과 함께 epoch마다 찍어두면 수축이 언제 시작되는지 궤적을 볼 수 있다.
 
 ---
 
