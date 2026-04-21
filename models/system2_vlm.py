@@ -113,6 +113,7 @@ class System2VLM(nn.Module):
                 torch_dtype=torch.bfloat16,
             )
             self.processor = PaliGemmaProcessor.from_pretrained(model_name)
+            self.vlm.tie_weights()  # DDP rank간 param count 불일치 방지
             if freeze:
                 for p in self.vlm.parameters():
                     p.requires_grad = False

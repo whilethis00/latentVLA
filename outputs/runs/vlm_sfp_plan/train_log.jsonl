@@ -1,0 +1,2 @@
+{"train/total_loss": 3.281867, "train/action_flow_loss": 1.275508, "train/prior_flow_loss": 1.602229, "train/semantic_future_loss": 1.0, "train/infonce_loss": 3.041304, "epoch": 1}
+{"train/total_loss": 2.375733, "train/action_flow_loss": 0.983886, "train/prior_flow_loss": 1.06727, "train/semantic_future_loss": 1.0, "train/infonce_loss": 2.245772, "epoch": 2}

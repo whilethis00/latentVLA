@@ -75,9 +75,11 @@ def main():
 
     cfg = apply_overrides(cfg, args.override)
 
+    # config에 output_dir 없을 때만 z_form 기반 자동 생성
     if not any("output_dir" in ov for ov in args.override):
-        z_form = cfg["system2"]["z_form"]
-        cfg["training"]["output_dir"] = f"outputs/runs/vlm_sfp_{z_form}"
+        if not cfg.get("training", {}).get("output_dir"):
+            z_form = cfg["system2"]["z_form"]
+            cfg["training"]["output_dir"] = f"outputs/runs/vlm_sfp_{z_form}"
 
     if is_main:
         import os as _os

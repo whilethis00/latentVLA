@@ -1,0 +1,67 @@
+# M8: LatentVLA + z-InfoNCE (S1 전용) + Task-Balanced Sampler
+# M7 (vlm_paligemma_infonce_balanced.yaml) 기반
+# 변경: infonce_stage1_only=True — Stage 2 이후 InfoNCE 비활성화
+# 가설: S1에서 z 구조 형성 후 S2에서 flow loss가 z를 끌어당기지 않도록
+# 사용법: python -m torch.distributed.run --nproc_per_node=<N> scripts/train_vlm.py --config configs/vlm_paligemma_infonce_s1only.yaml
+
+system2:
+  model_name: "google/paligemma-3b-pt-224"
+  z_form: "plan"
+  pool_k: 8
+  lora_rank: 16
+  lora_alpha: 32
+  lora_target_modules:
+    - "q_proj"
+    - "v_proj"
+  proprio_dim: 8
+  proprio_hidden: 128
+
+encoder:
+  context_dim: 256
+  siglip_model: "google/siglip-base-patch16-224"
+
+latent:
+  z_dim: 128
+
+model:
+  flow_hidden: 512
+  flow_depth: 4
+  flow_steps: 10
+
+loss:
+  prior_weight: 1.0
+  semantic_future_weight: 0.1
+  infonce_weight: 0.1              # S1에서만 적용 (M6 수준으로 복원)
+  infonce_temperature: 0.07
+  infonce_stage1_only: true        # M8 핵심: S2 진입 시 InfoNCE 자동 비활성화
+
+data:
+  dataset_type: libero
+  dataset_path: "/home/introai4/home_lustre/introai4/libero/libero_object_openvla_processed/"
+  action_horizon: 8
+  image_size: 224
+  num_workers: 4
+  use_task_balanced_sampler: true
+  num_tasks_per_batch: 4
+  samples_per_task: 4
+
+training:
+  seed: 42
+  num_epochs: 100
+  batch_size: 16
+  grad_accum_steps: 4
+  learning_rate: 3.0e-4
+  lora_lr: 3.0e-5
+  weight_decay: 1.0e-4
+  grad_clip: 1.0
+  warmup_steps: 200
+  stage2_epoch: 10
+  eval_every: 5
+  save_every: 10
+  best_of_ks: [1, 5]
+  output_dir: "outputs/runs/vlm_sfp_infonce_s1only_20260418"
+
+logging:
+  use_wandb: false
+  project: "latentVLA"
+  run_name: null
