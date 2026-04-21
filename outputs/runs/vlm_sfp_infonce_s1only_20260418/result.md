@@ -348,24 +348,32 @@ conda run -n vla python3 scripts/eval_z_diag.py \
 inference time에 prior로 샘플링한 z는 decoder가 거의 무시한다.
 즉 문제는 decoder가 z를 안 쓰는 게 아니라, **prior z가 decoder가 기대하는 공간에 없다**는 것이다.
 
-**posterior z 자체가 수축됐다.**
+**posterior z 자체는 충분히 퍼지지 않았다 (수축 의심, 단 확정은 아님).**
 
-`z_mu_var_mean = 0.0345`는 posterior z가 샘플마다 거의 같은 값이라는 뜻이다.
-decoder가 z를 쓰긴 쓰는데, 그 z가 상황마다 별로 다르지 않다.
-`probe_ratio = 0.92`도 같은 신호다 — 같은 task 내 샘플들의 z 거리가 random pair와 거의 같다는 건, z가 task나 미래 정보를 거의 담지 못하고 있다는 뜻이다.
+`z_mu_var_mean = 0.0345`는 낮은 편으로 보이고 contraction 의심을 강하게 준다.
+단 baseline(정상 범위가 어느 수준인지)이 없으므로, 이 숫자 하나만으로 "거의 다 같다"를 확정하기는 이르다.
 
-#### 왜 prior_flow_loss가 epoch 20 이후 역증가했는가
+대신 `probe_ratio = 0.9198`과 같이 읽으면 해석이 강해진다.
+probe_ratio가 1에 가깝다는 건, 같은 task 내 샘플들의 z 거리가 random pair와 거의 같다는 뜻이다.
+즉 z가 task나 미래 정보에 따라 다르게 인코딩되지 않고 있다.
+이 두 숫자를 합치면, **posterior z의 future-separation이 약하다**는 해석은 충분히 강하다.
 
-이 구조로 설명된다.
+#### 왜 prior_flow_loss가 epoch 20 이후 역증가했는가 (가설)
+
+다음은 가장 그럴듯한 설명이지만, 아직 가설이다. posterior 수축 외에 S2 data drift나 action_flow / prior_flow 간 loss competition이 섞였을 가능성도 배제할 수 없다.
+
+**가설 (posterior 수축 → prior mismatch 경로):**
 
 1. posterior z가 좁은 공간으로 수축한다
 2. prior flow는 그 수축된 분포를 따라가야 하는데, 수축이 계속될수록 타겟 분포 자체가 불안정해진다
 3. prior flow가 따라가기 점점 더 어려워지면서 loss가 다시 올라간다
-4. 결국 inference time의 prior z는 posterior z가 있는 좁은 공간에서 벗어나게 되고, decoder는 그 prior z를 무시하는 게 합리적이 된다
+4. inference time의 prior z는 posterior z가 있는 좁은 공간에서 벗어나게 되고, decoder는 그 prior z를 무시하는 게 합리적이 된다
+
+이 가설이 맞는지 확인하려면, z_mu_var_mean을 train loop에 기록해서 posterior 수축이 실제로 epoch 20 전후에 발생했는지 봐야 한다.
 
 **한 줄 요약:**
-posterior z가 수축해서 diversity가 없어졌고, prior flow는 그 수축된 분포를 제대로 못 따라가고 있다.
-decoder는 posterior z를 쓰고 싶어하지만, 그 z에 담긴 정보가 부족하다.
+decoder는 posterior z를 쓰고 있지만, 그 z가 future/task에 따라 충분히 달라지지 않는다.
+prior z는 그 posterior 공간을 inference time에 재현하지 못하고 있다.
 
 ---
 
