@@ -198,11 +198,29 @@ python scripts/train_vlm.py \
   --override training.output_dir=outputs/runs/m9_prior_action_cotrain
 ```
 
+새 방향의 VLM trainer는 causal-z metric을 기본적으로 매 epoch 평가합니다. 비용을 줄이고 싶으면 config override로 조절합니다.
+
+```bash
+python scripts/train_vlm.py \
+  --config configs/vlm_paligemma_infonce.yaml \
+  --override training.causal_eval_every=5
+```
+
 z-space 진단:
 
 ```bash
 python scripts/eval_z_diag.py \
   --checkpoint outputs/runs/vlm_sfp_infonce_s1only_20260418/ckpt_90.pt \
+  --max_batches 30
+```
+
+prior/posterior causal intervention 분리 평가:
+
+```bash
+python scripts/eval_causal_z.py \
+  --checkpoint outputs/runs/vlm_sfp_infonce_s1only_20260418/ckpt_90.pt \
+  --mode both \
+  --intervention shuffle \
   --max_batches 30
 ```
 

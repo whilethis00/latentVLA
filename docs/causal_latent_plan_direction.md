@@ -200,6 +200,29 @@ z_mu_norm
 z_mu_var
 z_var_mean
 z_sample_var
+probe_ratio
+```
+
+VLM trainer는 `training.causal_eval_every`를 기준으로 causal metric을 평가한다. 기본값은 `1`이라 다음 run부터 매 epoch 기록된다. GPU 시간이 부담되면 명시적으로 `training.causal_eval_every=5`처럼 낮출 수 있지만, 논문용 run은 매 epoch 로그를 권장한다.
+
+별도 평가 스크립트는 다음 인터페이스를 사용한다.
+
+```bash
+python scripts/eval_causal_z.py \
+  --checkpoint outputs/runs/vlm_sfp_infonce_s1only_20260418/ckpt_90.pt \
+  --mode both \
+  --intervention shuffle \
+  --max_batches 30
+```
+
+지원 intervention:
+
+```text
+shuffle
+null
+random
+task_negative
+motion_negative
 ```
 
 ---

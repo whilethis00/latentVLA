@@ -83,6 +83,7 @@ class VLMOfflineEvaluator:
             "z_mu_var": [],
             "z_var_mean": [],
             "z_sample_var": [],
+            "probe_ratio": [],
         }
 
         for i, batch in enumerate(tqdm(dataloader, desc="VLM Eval", leave=False)):
@@ -144,6 +145,27 @@ class VLMOfflineEvaluator:
                 metrics["z_mu_var"].append(mu_q.var(dim=0).mean().item())
                 metrics["z_var_mean"].append(logvar_q.exp().mean().item())
                 metrics["z_sample_var"].append(z_post.var(dim=0).mean().item())
+
+                task_ids = batch.get("task_id")
+                if task_ids is not None:
+                    task_ids = task_ids.to(self.device)
+                    same_mask = task_ids.unsqueeze(0) == task_ids.unsqueeze(1)
+                else:
+                    langs = list(batch["language"])
+                    same_mask = torch.tensor(
+                        [[a == b for b in langs] for a in langs],
+                        device=self.device,
+                        dtype=torch.bool,
+                    )
+                same_mask.fill_diagonal_(False)
+                offdiag_mask = ~torch.eye(B, device=self.device, dtype=torch.bool)
+                if same_mask.any() and offdiag_mask.any():
+                    dist = torch.cdist(mu_q.float(), mu_q.float())
+                    same_dist = dist[same_mask].mean()
+                    random_dist = dist[offdiag_mask].mean()
+                    metrics["probe_ratio"].append(
+                        (same_dist / (random_dist + 1e-8)).item()
+                    )
 
             # ── causal z interventions: prior and posterior paths are separate ─
             if B >= 2:
@@ -430,9 +452,10 @@ class VLMTrainer:
             log_dict = {f"train/{k}": v for k, v in train_metrics.items()}
             log_dict["epoch"] = epoch
 
-            # S2 경계(직전/진입) epoch은 eval_every와 무관하게 강제 평가
+            # Causal-z metrics are primary signals for PlanBind runs.
+            causal_eval_every = self.train_cfg.get("causal_eval_every", 1)
             s2_boundary = epoch in (self.stage2_epoch - 1, self.stage2_epoch)
-            do_eval = (epoch % self.train_cfg.get("eval_every", 5) == 0) or s2_boundary
+            do_eval = (epoch % causal_eval_every == 0) or s2_boundary
             if do_eval:
                 val_metrics = self.evaluator.evaluate(self.val_loader)
                 log_dict.update({f"val/{k}": v for k, v in val_metrics.items()})
