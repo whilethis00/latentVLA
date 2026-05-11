@@ -34,44 +34,9 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
-import random
-import numpy as np
 import torch
 import torch.distributed as dist
-import yaml
-
-
-def load_config(path: str) -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f)
-
-
-def apply_overrides(cfg: dict, overrides: list):
-    """Apply key=value overrides to nested config dict."""
-    for ov in overrides:
-        key, val = ov.split("=", 1)
-        keys = key.split(".")
-        d = cfg
-        for k in keys[:-1]:
-            d = d[k]
-        # Type coercion
-        orig = d.get(keys[-1])
-        if isinstance(orig, bool):
-            val = val.lower() in ("true", "1", "yes")
-        elif isinstance(orig, int):
-            val = int(val)
-        elif isinstance(orig, float):
-            val = float(val)
-        d[keys[-1]] = val
-    return cfg
-
-
-def set_seed(seed: int):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+from training.config_utils import apply_overrides, load_config, set_seed
 
 
 def main():

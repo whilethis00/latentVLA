@@ -1,297 +1,227 @@
-# LatentVLA: 로봇 행동 생성을 위한 계층적 잠재 변수 모델 비교 연구
+# PlanBind-VLA: 인과적으로 묶인 Latent Plan을 위한 VLA 연구
 
-시각·언어 관찰과 고유감각(proprioception)을 입력으로 받아 로봇 조작(manipulation) 행동 시퀀스를 생성하는 네 가지 계층적 잠재 변수 모델 아키텍처를 구현하고 비교한 연구입니다.
+이 저장소는 Vision-Language-Action 정책에서 latent plan `z`가 실제 행동 생성을 통제하는지 진단하고, inference-time prior plan이 action decoder에 인과적으로 쓰이도록 학습하는 방향의 연구 코드입니다.
+
+현재 결론은 단순히 "VLM-z가 MLP-z보다 좋다"가 아닙니다. 오히려 지금까지의 실험은 더 중요한 실패 모드를 보여줍니다.
+
+> VLM을 붙인다고 deployable latent plan이 저절로 생기지 않는다.
+> 행동 MSE는 좋아질 수 있지만, prior `z`가 action generation에 causal하게 쓰이지 않을 수 있다.
+
+따라서 핵심 질문은 다음입니다.
+
+**Can a Vision-Language-Action policy learn a deployable latent plan channel that is causally necessary for action generation?**
+
+한국어로는:
+
+**VLA가 현재 관찰과 언어로부터 앞으로의 행동 방식을 나타내는 latent plan을 만들고, 그 plan이 실제 action generation에 인과적으로 개입하게 만들 수 있는가?**
 
 ---
 
-## 연구 개요
+## 연구 방향
 
-**핵심 질문:** 다양하고 다봉(multimodal) 분포를 가지는 로봇 행동을 생성하려면 잠재 공간(latent space)을 어떻게 설계해야 하는가?
+기존 VLA와 generative action policy는 이미지/언어/상태에서 행동 chunk를 잘 예측하는 데 집중합니다. 그러나 manipulation은 같은 장면과 지시에서도 접근 방향, grasp pose, subgoal ordering이 달라질 수 있는 다봉 문제입니다. 이때 latent plan은 자연스러운 중간 표현이지만, 좋은 latent처럼 보이는 것과 action decoder가 그 latent를 실제로 쓰는 것은 다릅니다.
 
-- 결정론적(deterministic) vs. 확률론적(stochastic) 잠재 변수
-- VAE 기반 vs. Flow 기반 prior
+이 저장소의 새 방향은 `diagnose -> intervene -> bind`입니다.
 
-**공통 기반:**
-- 생성 모델: **Conditional Flow Matching (OT-CFM)**
-- 시각-언어 인코더: **SigLIP** (freeze하여 특징 추출기로 사용)
-- 행동 예측 지평선: 8 스텝
+1. **Diagnose**: `z`가 task/future 정보를 담는지, prior/posterior 경로에서 decoder가 `z`에 민감한지 분리해서 측정합니다.
+2. **Intervene**: shuffle/null/random/task-negative intervention으로 `z`를 바꿨을 때 action이 바뀌는지 확인합니다.
+3. **Bind**: prior-action co-training, counterfactual binding loss, anti-collapse regularization으로 inference-time `z`를 action generation에 묶습니다.
+
+---
+
+## 현재까지의 핵심 발견
+
+| 실험 | 핵심 결과 | 해석 |
+|------|----------|------|
+| M4 StochFlowPrior | epoch 100 `action_mse_prior=0.6540`, `z_shuffle_gap=0.0428` | MLP 기반 latent flow는 어느 정도 작동하지만, gap이 초기 기대만큼 크지는 않음 |
+| M5 VLM plan token | `action_mse_prior=0.6084`, `future_cosine_sim=0.9945`, `z_shuffle_gap=0.0163` | VLM feature는 MSE를 낮출 수 있지만 action-controlling plan은 아님 |
+| M6 InfoNCE | early gap은 올라갔으나 epoch 20 `z_shuffle_gap=0.0041` | contrastive만으로 causal usage collapse를 막지 못함 |
+| M8/S1-only 진단 | epoch 90 `action_mse_prior=0.5120`, `z_shuffle_gap=0.0086` | MSE는 좋아져도 inference-time prior `z` 경로는 약함 |
+| S2-also InfoNCE | epoch 100 `prior_posterior_gap=0.0002`, `z_shuffle_gap=0.0046` | prior/posterior가 비슷해 보여도 `z`가 행동에 필요하다는 뜻은 아님 |
+
+가장 중요한 논문 문장은 다음입니다.
+
+> Modern VLA policies can achieve reasonable action prediction while bypassing the latent planning channel.
+
+---
+
+## 제안 방법: PlanBind-VLA
+
+현재 구조를 버리지 않고 확장합니다.
+
+```text
+Current context:
+  c = VLM(o_t, language, proprio)
+
+Training-only posterior:
+  z_q ~ q_phi(z | c, action_chunk, future_obs)
+
+Deployable prior:
+  z_p ~ p_psi(z | c)
+
+Action decoder:
+  a ~ pi_theta(a | c, z)
+```
+
+핵심은 "VLM에서 plan token 하나 뽑기"가 아니라, `z`가 action decoder에 causal하게 묶이도록 학습시키는 것입니다.
+
+### Loss 구성
+
+```text
+L =
+  L_post_action
++ lambda_prior L_prior
++ lambda_mix   L_mix_action
++ lambda_cf    L_counterfactual_binding
++ lambda_var   L_variance_spread
++ lambda_spec  L_spectral_diversity
++ lambda_fut   L_futureNCE
+```
+
+각 loss는 특정 failure mode를 막기 위한 장치입니다.
+
+| Failure mode | 관측 지표 | 대응 |
+|--------------|----------|------|
+| posterior `z` collapse | `z_mu_var`, `z_sample_var` 낮음 | variance/spectral spread |
+| posterior `z`가 future/task를 못 나눔 | `probe_ratio` 약함 | futureNCE, hard negatives |
+| prior `z`를 decoder가 못 씀 | `prior_z_shuffle_gap` 낮음 | prior-action co-training |
+| decoder가 `z` 없이 shortcut 사용 | MSE는 낮지만 causal gap 낮음 | counterfactual binding |
+| naive VLM plan token 실패 | 높은 cosine, 낮은 gap | learned causal plan channel |
+
+---
+
+## 실험 로드맵
+
+한 번에 모든 loss를 넣지 않고 failure mode별로 검증합니다.
+
+| 단계 | 이름 | 목적 |
+|------|------|------|
+| M9 | VLM-SFP + Prior-Action Co-training | decoder를 prior `z`에도 노출 |
+| M10 | M9 + Counterfactual Binding Loss | 잘못된 `z`를 넣으면 action loss가 올라가게 학습 |
+| M11 | M10 + Anti-Collapse Spread | posterior `z` collapse 방지 |
+| M12 | M11 + FutureNCE | cosine future prediction의 쉬운 해법 제거 |
+
+최종 평가는 offline MSE가 아니라 rollout success가 중심입니다.
+
+```text
+x-axis: causal z metric
+y-axis: LIBERO rollout success rate
+
+FlatFlow, VAE, SFP, Naive VLA, InfoNCE, PlanBind-VLA
+```
 
 ---
 
 ## 프로젝트 구조
 
-```
+```text
 VLA/
-├── configs/
-│   └── default.yaml                   # 하이퍼파라미터 설정
-├── data/
-│   ├── robomimic_dataset.py            # HDF5 데이터셋 로더 (image / low_dim 모드)
-│   └── libero_dataset.py              # LIBERO 태스크 스위트 로더
+├── configs/                    # 실험 config
+├── data/                       # Robomimic / LIBERO dataset loader
 ├── models/
-│   ├── encoders.py                    # ContextEncoder (SigLIP + proprio 융합)
-│   ├── flat_flow.py                   # [M1] 베이스라인: 직접 행동 flow
-│   ├── det_latent.py                  # [M2] 결정론적 잠재 변수 + 행동 flow
-│   ├── stoch_latent_vae.py            # [M3] VAE 기반 확률론적 잠재 변수
-│   ├── stoch_latent_flow_prior.py     # [M4] 2단계 Flow (제안 모델)
-│   └── flow_utils.py                  # OT-CFM 유틸리티 (VelocityMLP, Euler 적분)
+│   ├── encoders.py             # SigLIP/state context encoder
+│   ├── flat_flow.py            # M1 direct action flow
+│   ├── det_latent.py           # M2 deterministic latent
+│   ├── stoch_latent_vae.py     # M3 VAE latent
+│   ├── stoch_latent_flow_prior.py
+│   ├── system2_vlm.py          # PaliGemma 기반 System 2
+│   └── latent_vla.py           # System 2 + System 1 통합
 ├── training/
-│   ├── builder.py                     # 팩토리: 데이터셋 / 데이터로더 / 모델
-│   └── trainer.py                     # 학습 루프, 평가, 체크포인트
+│   ├── builder.py              # dataset/model factory
+│   ├── config_utils.py         # config/override/seed helper
+│   ├── trainer.py              # non-VLM trainer
+│   └── trainer_vlm.py          # VLM trainer + causal z eval metrics
 ├── evaluation/
-│   └── metrics.py                     # OfflineEvaluator (best-of-K, z_shuffle_gap 등)
+│   └── metrics.py              # offline evaluator
 ├── scripts/
-│   ├── train.py                       # 학습 진입점
-│   ├── evaluate_offline.py            # 오프라인 평가 (best-of-K, temperature sweep)
-│   ├── plot_training.py               # 학습 곡선 시각화
-│   ├── smoke_test.py                  # 유닛 테스트 (실제 데이터 불필요)
-│   └── run_ablations.sh               # 4가지 핵심 실험 일괄 실행
-└── requirements.txt
+│   ├── train.py
+│   ├── train_vlm.py
+│   ├── evaluate_offline.py
+│   ├── evaluate_offline_vlm.py
+│   ├── eval_z_diag.py          # posterior z spread/drop/probe 진단
+│   └── smoke_test*.py
+├── outputs/runs/               # 보존된 실험 로그와 결과
+└── docs/
+    └── causal_latent_plan_direction.md
 ```
 
 ---
 
-## 모델 구조
+## 주요 지표
 
-| ID | 모델 | 잠재 변수 타입 | 핵심 아이디어 |
-|----|------|--------------|-------------|
-| M1 | **FlatFlow** | 없음 | 베이스라인 — 노이즈에서 행동으로 직접 flow |
-| M2 | **DetLatent** | 결정론적 | prior head로 z 예측, 행동 flow에 z 조건화 |
-| M3 | **StochVAE** | 확률론적 (VAE) | Gaussian posterior/prior + KL 정규화 |
-| M4 | **StochFlowPrior** | 확률론적 (Flow) | 잠재 flow + 행동 flow 2단계 구조 (KL 불필요) |
+기존 `z_shuffle_gap` 하나로는 부족합니다. prior와 posterior 경로를 반드시 분리합니다.
 
-### 아키텍처 요약
-
-```
-공유 컨텍스트 인코더:
-  이미지 (224×224) → SigLIP [frozen] → 패치 임베딩
-  언어 → SigLIP 텍스트 인코더 [frozen]
-  고유감각 → MLP
-  → 융합 컨텍스트 C_t ∈ R^256
-
-M1 FlatFlow:
-  C_t → VelocityMLP → 행동 시퀀스 (H × action_dim)
-
-M2 DetLatent:
-  C_t → PriorHead → z_hat ∈ R^128
-  (C_t, z_hat) → VelocityMLP → 행동 시퀀스
-
-M3 StochVAE:
-  Posterior: q(z | C_t, a, future) → z ~ N(μ, σ²)
-  Prior:     p(z | C_t) → z ~ N(μ_p, σ_p²)  [KL 손실]
-  (C_t, z) → VelocityMLP → 행동 시퀀스
-
-M4 StochFlowPrior (제안):
-  잠재 flow:  ε → z  (flow matching, KL 없음)
-  행동 flow:  ε → a  (C_t, z 조건화)
-```
-
-### 학습 손실
-
-- **행동 손실:** OT-CFM flow matching — `||v_θ(x_t, t, C) − u_t||²`
-- **Prior 손실:** MSE (M2) / KL divergence (M3) / flow matching (M4)
-- **시맨틱 보조 손실:** `1 − cosine_sim(예측 미래 임베딩, GT 미래 임베딩)` × 0.1
-
----
-
-## 실험 결과
-
-### StochFlowPrior (M4) — Temperature Sweep
-
-검증 세트(전체의 10%) 기준, 100 에폭 학습 후 평가.
-
-| Temperature | Action MSE (prior) | Action MSE (posterior) | Best-of-5 | 샘플 다양성 | z-Shuffle Gap |
-|-------------|---------------------|------------------------|-----------|------------|---------------|
-| 1.0         | 0.3797              | 0.2999                 | **0.2421** | 0.2781     | 0.7249        |
-| 0.7         | 0.3886              | 0.2999                 | 0.2467    | 0.2452     | 0.7041        |
-| 0.5         | **0.3751**          | 0.3093                 | 0.2802    | 0.2359     | 0.6864        |
-| 0.3         | 0.3848              | 0.3180                 | 0.3027    | 0.2307     | 0.6986        |
-
-**미래 시맨틱 cosine 유사도: 0.9999** (전 temperature 공통 — 시맨틱 정렬 우수)
-
-### 학습 곡선 (StochFlowPrior)
-
-| 에폭 | 전체 손실 | 행동 Flow 손실 | Prior Flow 손실 | 시맨틱 손실 |
-|------|----------|--------------|----------------|-----------|
-| 1    | 3.823    | 1.628        | 2.103          | 0.918     |
-| 10   | ~1.2     | ~0.6         | ~0.6           | ~0.03     |
-| 50   | ~0.45    | ~0.38        | ~0.07          | ~0.0001   |
-| 100  | 0.390    | 0.355        | 0.035          | 0.000074  |
-
----
-
-## 주요 인사이트
-
-### 1. 잠재 변수 z는 핵심 정보를 담는다 (z-Shuffle Gap)
-배치 내에서 z를 섞으면 성능이 **~72% 하락** (`z_shuffle_gap ≈ 0.72`).
-잠재 코드가 단순한 노이즈가 아닌 행동 조건화에 필수적인 의미 정보를 담고 있음을 확인.
-
-### 2. Prior는 Posterior를 잘 근사하지만 완벽하진 않다
-Prior-posterior gap ~8% (`≈ 0.080`).
-Flow 기반 prior는 VAE의 posterior collapse 위험 없이 합리적인 근사를 달성.
-그러나 추가적인 prior 개선 여지가 존재함.
-
-### 3. Best-of-K로 다양성 효용 확인
-`best_of_5 = 0.242` vs `best_of_1 = 0.386` — 5개 샘플 중 최선을 선택할 경우 MSE가 **~37% 감소**.
-확률론적 모델이 실제로 의미 있는 다양한 행동 모드를 생성하고 있음을 시사.
-
-### 4. Temperature: 다양성-정확도 트레이드오프
-- **낮은 temperature (0.3–0.5):** 다양성 감소, 하지만 MSE가 일관되게 개선되지는 않음 (모드가 GT에서 벗어날 수 있음)
-- **Temperature = 1.0:** 다양성 최대, MSE도 경쟁력 있음 → 가장 균형 잡힌 설정
-
-### 5. 시맨틱 보조 손실은 빠르게 수렴
-시맨틱 손실이 에폭 1(0.918) → 에폭 10(~0.03)으로 급감하고, 에폭 20 이후 무시할 수준.
-미래 SigLIP 임베딩 예측은 거의 완벽 (`cosine_sim ≈ 0.9999`)하지만, 이 보조 태스크가 컨텍스트 표현의 시맨틱 정렬을 개선하여 행동 예측에도 기여함.
-
-### 6. VAE vs Flow Prior 설계 차이
-StochFlowPrior는 명시적 KL 정규화 없이 flow를 통해 prior가 posterior z 분포를 직접 매칭.
-이로 인해:
-- Posterior collapse 방지
-- 더 풍부한 다봉(multimodal) z 분포 표현 가능
-- β-VAE 튜닝 불필요, 학습 안정성 향상
-
-### 7. Ablation 실험 목록
-
-| 실험명 | 설명 |
-|--------|------|
-| `stoch_flow_prior` | M4 전체 모델 (시맨틱 손실 포함) |
-| `sfp_nosem` | M4에서 시맨틱 보조 손실 제거 |
-| `sfp_planner_full` | M4 — planner 입력: 전체 상태 |
-| `sfp_planner_object_only` | M4 — planner 입력: 오브젝트 상태만 (10차원) |
-| `sfp_planner_proprio_only` | M4 — planner 입력: 고유감각만 |
-| `sfp_zdim32` / `sfp_zdim64` | M4 — 잠재 차원 32 / 64 |
-| `flat_flow` | 베이스라인 M1 |
-| `det_latent` | 베이스라인 M2 |
-| `stoch_vae` | 베이스라인 M3 |
-| `svae_nosem` | M3에서 시맨틱 보조 손실 제거 |
+| 지표 | 의미 |
+|------|------|
+| `action_mse_prior` | deployable prior `z_p`로 생성한 행동 MSE |
+| `action_mse_posterior` | training-only posterior `z_q`로 생성한 행동 MSE |
+| `prior_posterior_gap` | prior/posterior 성능 차이 |
+| `prior_z_shuffle_gap` | prior `z_p`를 섞었을 때 MSE 증가량 |
+| `posterior_z_shuffle_gap` | posterior `z_q`를 섞었을 때 MSE 증가량 |
+| `delta_null_prior` | prior `z_p`를 0으로 제거했을 때 MSE 증가량 |
+| `delta_null_posterior` | posterior `z_q`를 0으로 제거했을 때 MSE 증가량 |
+| `z_mu_var` | posterior mean의 batch variance |
+| `z_sample_var` | posterior sample의 batch variance |
+| `probe_ratio` | same-task future pair와 random pair의 posterior 거리 비율 |
+| `best_of_K` | stochastic action sampling의 다양성 효용 |
 
 ---
 
 ## 빠른 시작
 
-### 설치
 ```bash
 pip install -r requirements.txt
 ```
 
-### 유닛 테스트 (데이터 없이 동작 확인)
+기본 smoke test:
+
 ```bash
 python scripts/smoke_test.py
+python scripts/smoke_test_vlm.py
 ```
 
-### 학습
+일반 모델 학습:
+
 ```bash
-# StochFlowPrior (M4) 학습
 python scripts/train.py \
-    --config configs/default.yaml \
-    --override model.type=stoch_flow_prior \
-               data.dataset_type=robomimic \
-               data.dataset_path=/path/to/dataset.hdf5
-
-# 4가지 모델 순차 학습
-bash scripts/run_ablations.sh
+  --config configs/default.yaml \
+  --override model.type=stoch_flow_prior \
+             data.dataset_type=robomimic \
+             data.dataset_path=/path/to/dataset.hdf5
 ```
 
-### 평가
+VLM 모델 학습:
+
 ```bash
-python scripts/evaluate_offline.py \
-    --run_dir outputs/runs/stoch_flow_prior \
-    --best_of_k 1 3 5 10 \
-    --temperature_sweep 1.0 0.7 0.5 0.3
+python scripts/train_vlm.py \
+  --config configs/vlm_paligemma_infonce.yaml \
+  --override training.output_dir=outputs/runs/m9_prior_action_cotrain
 ```
 
-### 학습 곡선 시각화
+z-space 진단:
+
 ```bash
-python scripts/plot_training.py \
-    --runs outputs/runs/flat_flow outputs/runs/stoch_flow_prior \
-    --metric action_flow_loss
+python scripts/eval_z_diag.py \
+  --checkpoint outputs/runs/vlm_sfp_infonce_s1only_20260418/ckpt_90.pt \
+  --max_batches 30
 ```
 
 ---
 
-## 주요 설정 파라미터
+## 논문 포지셔닝
 
-```yaml
-model:
-  type: stoch_flow_prior   # flat_flow | det_latent | stoch_vae | stoch_flow_prior
-  flow_steps: 10           # 추론 시 ODE 적분 스텝 수
-  planner_input: full      # full | object_only | proprio_only
+우리는 future-aware posterior branch 자체를 처음 제안한다고 주장하지 않습니다. latent plan/action, future-aware posterior, anti-collapse regularization은 이미 가까운 연구 흐름이 있습니다.
 
-latent:
-  z_dim: 128               # 잠재 변수 차원
+차별점은 다음입니다.
 
-loss:
-  semantic_future_weight: 0.1   # 시맨틱 보조 손실 가중치
-  kl_beta: 1.0                  # VAE KL 가중치 (M3 전용)
+> 기존 연구는 latent action/reasoning을 학습하지만, 그 latent가 action generation에 실제로 causal하게 쓰이는지를 중심 진단 지표와 학습 목표로 삼지 않는다. 우리는 VLA의 latent plan channel을 diagnose, intervene, bind하는 방법을 제안한다.
 
-training:
-  num_epochs: 100
-  learning_rate: 3.0e-4
-  batch_size: 64
-```
+한 문장 정의:
+
+> 우리는 VLA에서 latent plan이 왜 action을 실제로 통제하지 못하는지 진단하고, inference-time prior plan이 action generation에 인과적으로 묶이도록 학습하는 방법을 제안한다.
 
 ---
 
-## 평가 지표
+## 현재 환경 메모
 
-| 지표 | 설명 |
-|------|------|
-| `action_mse_prior` | Prior 샘플링 행동과 GT 간 MSE |
-| `action_mse_posterior` | Posterior z 사용 시 MSE (상한선) |
-| `best_of_K` | K개 샘플 중 최소 MSE — 다양성 효용 측정 |
-| `future_cosine_sim` | 예측 미래 임베딩과 실제 임래딩 간 코사인 유사도 |
-| `sampling_diversity` | 샘플링된 행동들의 표준편차 — 출력 분산 측정 |
-| `z_shuffle_gap` | z를 섞었을 때 성능 하락 — z의 중요도 측정 |
-| `prior_posterior_gap` | `mse_prior - mse_posterior` — prior 품질 측정 |
-
----
-
-## 향후 실험 계획
-
-### 단기 (현재 프레임워크 내)
-
-| 실험 | 목적 |
-|------|------|
-| **모델 간 정량 비교** | M1~M4 동일 데이터셋·조건에서 action MSE, best-of-K, z_shuffle_gap 직접 비교표 완성 |
-| **z_dim ablation 확장** | z_dim = 32 / 64 / 128 / 256 전 범위 비교 (현재 32, 64만 완료) |
-| **Planner 입력 ablation 결과 분석** | full / object_only / proprio_only 성능 차이로 상태 표현의 어떤 부분이 행동 예측에 중요한지 파악 |
-| **시맨틱 보조 손실 효과 정량화** | `sfp_nosem` vs `stoch_flow_prior` 비교로 auxiliary task의 실제 기여도 측정 |
-| **Best-of-K 곡선** | K = 1, 2, 3, 5, 10, 20으로 확장하여 다양성 포화(saturation) 지점 파악 |
-
-### 중기 (모델 확장)
-
-| 실험 | 목적 |
-|------|------|
-| **온라인 평가 (시뮬레이터)** | Robosuite / LIBERO 환경에서 실제 태스크 성공률(task success rate) 측정 |
-| **Diffusion Prior** | Flow prior 대신 DDPM/DDIM 기반 prior로 교체 후 성능·속도 비교 |
-| **계층 깊이 실험** | 2단계 flow (현재) → 3단계 (goal-z-action) 구조 탐색 |
-| **SigLIP fine-tuning** | 인코더를 freeze 해제하고 end-to-end 학습 시 성능 변화 확인 |
-| **언어 조건화 강화** | 현재 SigLIP 텍스트 → CLIP / T5 / LLaMA 임베딩으로 교체 비교 |
-| **멀티태스크 학습** | LIBERO 태스크 스위트 전체로 단일 모델 학습 (태스크 간 전이 효과 측정) |
-
-### 장기 (연구 방향)
-
-| 실험 | 목적 |
-|------|------|
-| **실로봇 배포** | 시뮬레이터 성능이 좋은 모델을 실로봇(6-DoF arm)에서 검증 |
-| **온라인 적응** | 소수의 시연(few-shot demonstration)으로 새 태스크에 빠른 적응 |
-| **잠재 공간 해석** | z를 시각화하여 태스크·단계별 군집화 패턴 분석 (디버깅 & 해석성) |
-| **VLA foundation model 통합** | OpenVLA / Octo 등 대형 VLA에 StochFlowPrior head를 붙여 다양성 개선 탐색 |
-
----
-
-## 지원 데이터셋
-
-- **Robomimic** — HDF5 포맷, image 및 low-dim 모드 지원
-- **LIBERO** — 태스크 스위트 (libero_object, libero_long), 언어 어노테이션 포함
-
----
-
-## 의존성
-
-```
-torch>=2.1.0
-torchvision>=0.16.0
-transformers>=4.37.0       # SigLIP
-einops, h5py, pyyaml, tqdm, matplotlib, scikit-learn
-wandb                      # 선택 사항 (실험 추적)
-```
+이 저장소의 결과 로그는 `outputs/runs/**/train_log.jsonl` 및 `result.md`로 보존합니다. 체크포인트 `.pt` 파일은 용량이 커서 git 추적 대상이 아닙니다.

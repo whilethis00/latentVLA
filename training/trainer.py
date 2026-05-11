@@ -63,10 +63,12 @@ class Trainer:
         self._raw_policy = getattr(policy, "module", policy)
 
         # Optimizer: skip frozen params; avoid duplicate registration when encoders are shared
+        self._trainable_modules = [context_encoder, policy]
         trainable = list(p for p in context_encoder.parameters() if p.requires_grad)
         if planner_encoder is not context_encoder:
+            self._trainable_modules.append(planner_encoder)
             trainable += list(p for p in planner_encoder.parameters() if p.requires_grad)
-        trainable += list(policy.parameters())
+        trainable += list(p for p in policy.parameters() if p.requires_grad)
         self.optimizer = AdamW(
             trainable,
             lr=self.train_cfg["learning_rate"],
@@ -237,10 +239,13 @@ class Trainer:
 
         self.optimizer.zero_grad()
         loss_dict["total_loss"].backward()
-        nn.utils.clip_grad_norm_(
-            list(self.context_encoder.parameters()) + list(self.policy.parameters()),
-            self.train_cfg["grad_clip"],
-        )
+        grad_params = [
+            p
+            for module in self._trainable_modules
+            for p in module.parameters()
+            if p.requires_grad
+        ]
+        nn.utils.clip_grad_norm_(grad_params, self.train_cfg["grad_clip"])
 
         # Warmup
         if self.global_step < self.warmup_steps:

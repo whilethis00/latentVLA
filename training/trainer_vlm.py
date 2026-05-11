@@ -74,7 +74,15 @@ class VLMOfflineEvaluator:
             "sampling_diversity": [],
             **{f"best_of_{k}": [] for k in self.best_of_ks},
             "future_cosine_sim": [],
-            "z_shuffle_gap": [],
+            "z_shuffle_gap": [],  # backward-compatible alias for prior_z_shuffle_gap
+            "prior_z_shuffle_gap": [],
+            "posterior_z_shuffle_gap": [],
+            "delta_null_prior": [],
+            "delta_null_posterior": [],
+            "z_mu_norm": [],
+            "z_mu_var": [],
+            "z_var_mean": [],
+            "z_sample_var": [],
         }
 
         for i, batch in enumerate(tqdm(dataloader, desc="VLM Eval", leave=False)):
@@ -117,13 +125,14 @@ class VLMOfflineEvaluator:
             )
 
             # ── future cosine sim ──────────────────────────────────────────
+            mu_q = logvar_q = z_post = None
             if future_feat is not None and hasattr(self.model.system1, "semantic_head"):
-                from models.stoch_latent_vae import GaussianEncoder
                 parts = [f_tilde, actions.reshape(B, -1)]
                 if future_feat is not None:
                     parts.append(future_feat)
                 q_in = torch.cat(parts, -1)
-                mu_q, _ = self.model.system1.posterior_enc(q_in)
+                mu_q, logvar_q = self.model.system1.posterior_enc(q_in)
+                z_post = mu_q + (0.5 * logvar_q).exp() * torch.randn_like(mu_q)
                 pred_future = self.model.system1.semantic_head(mu_q)
                 cos = F.cosine_similarity(
                     F.normalize(pred_future, dim=-1),
@@ -131,8 +140,12 @@ class VLMOfflineEvaluator:
                     dim=-1,
                 ).mean().item()
                 metrics["future_cosine_sim"].append(cos)
+                metrics["z_mu_norm"].append(mu_q.norm(dim=-1).mean().item())
+                metrics["z_mu_var"].append(mu_q.var(dim=0).mean().item())
+                metrics["z_var_mean"].append(logvar_q.exp().mean().item())
+                metrics["z_sample_var"].append(z_post.var(dim=0).mean().item())
 
-            # ── z-shuffle gap ──────────────────────────────────────────────
+            # ── causal z interventions: prior and posterior paths are separate ─
             if B >= 2:
                 from models.flow_utils import euler_integrate
                 z_normal = euler_integrate(
@@ -141,9 +154,11 @@ class VLMOfflineEvaluator:
                 )
                 perm = torch.randperm(B, device=self.device)
                 z_shuffled = z_normal[perm]
+                z_null = torch.zeros_like(z_normal)
 
                 cond_normal = torch.cat([f_tilde, z_normal], dim=-1)
                 cond_shuffled = torch.cat([f_tilde, z_shuffled], dim=-1)
+                cond_null = torch.cat([f_tilde, z_null], dim=-1)
                 x_dim = self.model.system1.x_dim
 
                 a_normal = euler_integrate(
@@ -154,10 +169,47 @@ class VLMOfflineEvaluator:
                     self.model.system1.action_flow, cond_shuffled, x_dim,
                     self.model.system1.flow_steps
                 ).reshape(B, self.model.system1.action_horizon, -1)
+                a_null = euler_integrate(
+                    self.model.system1.action_flow, cond_null, x_dim,
+                    self.model.system1.flow_steps
+                ).reshape(B, self.model.system1.action_horizon, -1)
 
                 gap = (F.mse_loss(a_shuffled, actions) -
                        F.mse_loss(a_normal, actions)).item()
+                null_gap = (F.mse_loss(a_null, actions) -
+                            F.mse_loss(a_normal, actions)).item()
                 metrics["z_shuffle_gap"].append(gap)
+                metrics["prior_z_shuffle_gap"].append(gap)
+                metrics["delta_null_prior"].append(null_gap)
+
+                if z_post is not None:
+                    z_post_shuffled = z_post[perm]
+                    z_post_null = torch.zeros_like(z_post)
+                    cond_post = torch.cat([f_tilde, z_post], dim=-1)
+                    cond_post_shuffled = torch.cat([f_tilde, z_post_shuffled], dim=-1)
+                    cond_post_null = torch.cat([f_tilde, z_post_null], dim=-1)
+
+                    a_post = euler_integrate(
+                        self.model.system1.action_flow, cond_post, x_dim,
+                        self.model.system1.flow_steps
+                    ).reshape(B, self.model.system1.action_horizon, -1)
+                    a_post_shuffled = euler_integrate(
+                        self.model.system1.action_flow, cond_post_shuffled, x_dim,
+                        self.model.system1.flow_steps
+                    ).reshape(B, self.model.system1.action_horizon, -1)
+                    a_post_null = euler_integrate(
+                        self.model.system1.action_flow, cond_post_null, x_dim,
+                        self.model.system1.flow_steps
+                    ).reshape(B, self.model.system1.action_horizon, -1)
+
+                    metrics["posterior_z_shuffle_gap"].append(
+                        (F.mse_loss(a_post_shuffled, actions) -
+                         F.mse_loss(a_post, actions)).item()
+                    )
+                    metrics["delta_null_posterior"].append(
+                        (F.mse_loss(a_post_null, actions) -
+                         F.mse_loss(a_post, actions)).item()
+                    )
 
             # ── diversity + best-of-K ──────────────────────────────────────
             max_k = max(self.best_of_ks)

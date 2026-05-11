@@ -2,40 +2,43 @@
 Factory functions for datasets, dataloaders, and models.
 """
 
-import torch
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 
 from data import RobomimicDataset, LiberoDataset
 from models import ContextEncoder, StateContextEncoder, FlatFlow, DetLatent, StochLatentVAE, StochLatentFlowPrior
 
 
-def build_datasets(cfg: dict):
+def _copy_normalization_stats(train_ds, val_ds):
+    for name in ("action_mean", "action_std", "obs_mean", "obs_std"):
+        if hasattr(train_ds, name):
+            setattr(val_ds, name, getattr(train_ds, name))
+
+
+def _dataset_class(dataset_type: str):
+    if dataset_type == "robomimic":
+        return RobomimicDataset
+    if dataset_type == "libero":
+        return LiberoDataset
+    raise ValueError(f"Unknown dataset_type: {dataset_type}")
+
+
+def _build_dataset_pair(cfg: dict, **extra_kwargs):
     data_cfg = cfg["data"]
     kwargs = dict(
         action_horizon=data_cfg["action_horizon"],
         image_size=data_cfg["image_size"],
+        **extra_kwargs,
     )
 
-    if data_cfg["dataset_type"] == "robomimic":
-        train_ds = RobomimicDataset(data_cfg["dataset_path"], split="train", **kwargs)
-        val_ds = RobomimicDataset(data_cfg["dataset_path"], split="valid", **kwargs)
-        # Propagate normalization stats
-        if hasattr(train_ds, "action_mean"):
-            val_ds.action_mean = train_ds.action_mean
-            val_ds.action_std = train_ds.action_std
-        if hasattr(train_ds, "obs_mean"):
-            val_ds.obs_mean = train_ds.obs_mean
-            val_ds.obs_std = train_ds.obs_std
-    elif data_cfg["dataset_type"] == "libero":
-        train_ds = LiberoDataset(data_cfg["dataset_path"], split="train", **kwargs)
-        val_ds = LiberoDataset(data_cfg["dataset_path"], split="valid", **kwargs)
-        if hasattr(train_ds, "action_mean"):
-            val_ds.action_mean = train_ds.action_mean
-            val_ds.action_std = train_ds.action_std
-    else:
-        raise ValueError(f"Unknown dataset_type: {data_cfg['dataset_type']}")
-
+    dataset_cls = _dataset_class(data_cfg["dataset_type"])
+    train_ds = dataset_cls(data_cfg["dataset_path"], split="train", **kwargs)
+    val_ds = dataset_cls(data_cfg["dataset_path"], split="valid", **kwargs)
+    _copy_normalization_stats(train_ds, val_ds)
     return train_ds, val_ds
+
+
+def build_datasets(cfg: dict):
+    return _build_dataset_pair(cfg)
 
 
 def build_dataloaders(train_ds, val_ds, cfg: dict, train_sampler=None):
@@ -156,31 +159,9 @@ def build_model(cfg: dict, action_dim: int, proprio_dim: int, train_ds=None):
     return context_encoder, planner_encoder, policy
 
 
-# ── VLM 모델 빌드 (LatentVLA) ──────────────────────────────────────────────────
-
 def build_vlm_datasets(cfg: dict):
     """LatentVLA용 데이터셋 빌드 (기존 build_datasets와 동일하나 vlm_mode=True)."""
-    data_cfg = cfg["data"]
-    kwargs = dict(
-        action_horizon=data_cfg["action_horizon"],
-        image_size=data_cfg["image_size"],
-        include_raw_image=True,   # PaliGemma용 uint8 이미지 추가
-    )
-    if data_cfg["dataset_type"] == "libero":
-        train_ds = LiberoDataset(data_cfg["dataset_path"], split="train", **kwargs)
-        val_ds   = LiberoDataset(data_cfg["dataset_path"], split="valid", **kwargs)
-        if hasattr(train_ds, "action_mean"):
-            val_ds.action_mean = train_ds.action_mean
-            val_ds.action_std  = train_ds.action_std
-    elif data_cfg["dataset_type"] == "robomimic":
-        train_ds = RobomimicDataset(data_cfg["dataset_path"], split="train", **kwargs)
-        val_ds   = RobomimicDataset(data_cfg["dataset_path"], split="valid", **kwargs)
-        if hasattr(train_ds, "action_mean"):
-            val_ds.action_mean = train_ds.action_mean
-            val_ds.action_std  = train_ds.action_std
-    else:
-        raise ValueError(f"Unknown dataset_type: {data_cfg['dataset_type']}")
-    return train_ds, val_ds
+    return _build_dataset_pair(cfg, include_raw_image=True)
 
 
 def build_dataloaders_vlm(train_ds, val_ds, cfg: dict, rank: int = 0, world_size: int = 1):

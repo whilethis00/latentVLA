@@ -13,11 +13,9 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import argparse
-import yaml
 import torch
 import torch.distributed as dist
-import random
-import numpy as np
+from training.config_utils import apply_overrides, load_config, set_seed
 
 
 def parse_args():
@@ -30,27 +28,6 @@ def parse_args():
     p.add_argument("--resume_epoch", type=int, default=None,
                    help="resume 체크포인트의 epoch 번호 (epoch 키 없는 구 체크포인트용)")
     return p.parse_args()
-
-
-def apply_overrides(cfg: dict, overrides: list):
-    for ov in overrides:
-        key, val = ov.split("=", 1)
-        keys = key.split(".")
-        d = cfg
-        for k in keys[:-1]:
-            d = d.setdefault(k, {})
-        try:
-            val = int(val)
-        except ValueError:
-            try:
-                val = float(val)
-            except ValueError:
-                if val.lower() == "true":
-                    val = True
-                elif val.lower() == "false":
-                    val = False
-        d[keys[-1]] = val
-    return cfg
 
 
 def main():
@@ -70,10 +47,8 @@ def main():
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
 
     # ── Config ───────────────────────────────────────────────────
-    with open(args.config) as f:
-        cfg = yaml.safe_load(f)
-
-    cfg = apply_overrides(cfg, args.override)
+    cfg = load_config(args.config)
+    cfg = apply_overrides(cfg, args.override, create_missing=True)
 
     # config에 output_dir 없을 때만 z_form 기반 자동 생성
     if not any("output_dir" in ov for ov in args.override):
@@ -82,14 +57,7 @@ def main():
             cfg["training"]["output_dir"] = f"outputs/runs/vlm_sfp_{z_form}"
 
     if is_main:
-        import os as _os
-        _os.makedirs(cfg["training"]["output_dir"], exist_ok=True)
-        from training.trainer_vlm import _Tee
-        import datetime
-        _log_path = _os.path.join(cfg["training"]["output_dir"], "train.log")
-        _tee = _Tee(_log_path)
-        print(f"[train_vlm] 로그 파일: {_log_path}  "
-              f"(시작: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')})")
+        os.makedirs(cfg["training"]["output_dir"], exist_ok=True)
         print("=" * 60)
         print(f"[train_vlm] z_form     : {cfg['system2']['z_form']}")
         print(f"[train_vlm] output_dir : {cfg['training']['output_dir']}")
@@ -102,11 +70,7 @@ def main():
 
     # ── 시드 (rank별로 다르게) ────────────────────────────────────
     seed = cfg["training"].get("seed", 42) + rank
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+    set_seed(seed)
 
     # ── 데이터셋 ─────────────────────────────────────────────────
     from training.builder import build_vlm_datasets, build_dataloaders_vlm
