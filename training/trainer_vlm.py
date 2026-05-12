@@ -302,6 +302,10 @@ class VLMTrainer:
         self.infonce_weight = self.loss_cfg.get("infonce_weight", 0.0)
         self.infonce_temperature = self.loss_cfg.get("infonce_temperature", 0.07)
         self.infonce_stage1_only = self.loss_cfg.get("infonce_stage1_only", False)
+        self.prior_action_weight = self.loss_cfg.get("prior_action_weight", 0.0)
+        self.prior_action_mix_start_epoch = self.loss_cfg.get("prior_action_mix_start_epoch", 10)
+        self.prior_action_mix_ramp_epochs = self.loss_cfg.get("prior_action_mix_ramp_epochs", 20)
+        self.prior_action_mix_max = self.loss_cfg.get("prior_action_mix_max", 0.0)
         # S2 LR warmup: LoRA LR를 0.1배에서 선형 증가 (0이면 비활성)
         self.s2_lora_warmup_steps = self.train_cfg.get("s2_lora_warmup_steps", 0)
 
@@ -388,6 +392,7 @@ class VLMTrainer:
         print(f"  z_form: {self.cfg['system2']['z_form']}")
         print(f"  Stage 2 시작 epoch: {self.stage2_epoch}")
         print(f"  Grad accum steps: {self.grad_accum}")
+        print(f"  Prior-action mix max: {self.prior_action_mix_max}")
         print(f"  Train: {len(self.train_loader.dataset)}  "
               f"Val: {len(self.val_loader.dataset)}")
 
@@ -524,6 +529,7 @@ class VLMTrainer:
             self.infonce_weight if (is_stage1 or not self.infonce_stage1_only)
             else 0.0
         )
+        prior_action_mix_prob = self._prior_action_mix_prob(epoch)
 
         pbar = tqdm(
             self.train_loader, desc=f"Epoch {epoch}", leave=False, dynamic_ncols=True
@@ -537,6 +543,8 @@ class VLMTrainer:
                     prior_weight=self.loss_cfg.get("prior_weight", 1.0),
                     infonce_weight=effective_infonce_weight,
                     infonce_temperature=self.infonce_temperature,
+                    prior_action_mix_prob=prior_action_mix_prob,
+                    prior_action_weight=self.prior_action_weight,
                 )
 
             loss = loss_dict["total_loss"] / self.grad_accum
@@ -561,6 +569,16 @@ class VLMTrainer:
         return {k: v / n for k, v in accum.items()}
 
     # ── 유틸 ──────────────────────────────────────────────────────────────────
+
+    def _prior_action_mix_prob(self, epoch: int) -> float:
+        if self.prior_action_weight <= 0.0 or self.prior_action_mix_max <= 0.0:
+            return 0.0
+        if epoch < self.prior_action_mix_start_epoch:
+            return 0.0
+        ramp_epochs = max(int(self.prior_action_mix_ramp_epochs), 1)
+        progress = (epoch - self.prior_action_mix_start_epoch + 1) / ramp_epochs
+        progress = max(0.0, min(float(progress), 1.0))
+        return float(self.prior_action_mix_max) * progress
 
     def _print(self, epoch, train, val=None):
         stage = "S2" if epoch >= self.stage2_epoch else "S1"

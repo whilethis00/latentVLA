@@ -100,4 +100,5 @@ M9 성공 기준은 MSE 단독 개선이 아니다. 최소 성공 조건은 prio
 ```bash
 # M9: VLM-SFP + Prior-Action Co-training
 # 목적: decoder를 training 중 prior z에도 노출하여 prior path를 action decoder에 묶기
+bash scripts/run_m9_prior_action_cotrain.sh
 ```

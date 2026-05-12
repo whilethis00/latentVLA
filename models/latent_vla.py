@@ -155,6 +155,8 @@ class LatentVLA(nn.Module):
         prior_weight: float = None,
         infonce_weight: float = 0.0,
         infonce_temperature: float = 0.07,
+        prior_action_mix_prob: float = 0.0,
+        prior_action_weight: float = 1.0,
     ) -> dict:
         """
         batch 키:
@@ -194,6 +196,8 @@ class LatentVLA(nn.Module):
             planner_context=f_tilde,
             semantic_weight=semantic_weight,
             prior_weight=prior_weight,
+            prior_action_mix_prob=prior_action_mix_prob,
+            prior_action_weight=prior_action_weight,
         )
         z_mu   = loss_dict.pop("_z_mu")    # posterior mean, for distillation
         z_star = loss_dict.pop("_z_star")  # sampled posterior z, for InfoNCE

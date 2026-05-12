@@ -198,6 +198,12 @@ python scripts/train_vlm.py \
   --override training.output_dir=outputs/runs/m9_prior_action_cotrain
 ```
 
+M9 prior-action co-training:
+
+```bash
+bash scripts/run_m9_prior_action_cotrain.sh
+```
+
 새 방향의 VLM trainer는 causal-z metric을 기본적으로 매 epoch 평가합니다. 비용을 줄이고 싶으면 config override로 조절합니다.
 
 ```bash

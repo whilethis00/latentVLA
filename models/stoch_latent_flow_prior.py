@@ -101,6 +101,8 @@ class StochLatentFlowPrior(nn.Module):
         planner_context: torch.Tensor = None,   # (B, context_dim) — planner subset; None = use context
         semantic_weight: float = 0.1,
         prior_weight: float = None,
+        prior_action_mix_prob: float = 0.0,
+        prior_action_weight: float = 1.0,
     ) -> dict:
         B = actions.shape[0]
         prior_weight = prior_weight if prior_weight is not None else self.prior_weight
@@ -122,6 +124,23 @@ class StochLatentFlowPrior(nn.Module):
             self.action_flow, actions.reshape(B, -1), action_cond
         )
 
+        # 2b. Prior-action co-training (M9)
+        # Expose the action decoder to deployable prior z during training.
+        loss_prior_action = torch.tensor(0.0, device=context.device)
+        if prior_action_mix_prob > 0.0 and prior_action_weight > 0.0:
+            with torch.no_grad():
+                z_prior = euler_integrate(
+                    self.prior_flow, _planner, self.z_dim, self.flow_steps
+                )
+                mix_mask = (
+                    torch.rand(B, 1, device=context.device) < prior_action_mix_prob
+                )
+                z_mix = torch.where(mix_mask, z_prior, z_for_action)
+            action_cond_mix = torch.cat([context, z_mix], dim=-1)
+            loss_prior_action = flow_matching_loss(
+                self.action_flow, actions.reshape(B, -1), action_cond_mix
+            )
+
         # 3. Latent prior flow loss — prior target always detached (moving target 방지)
         loss_prior = flow_matching_loss(
             self.prior_flow, z_star.detach(), _planner
@@ -139,6 +158,7 @@ class StochLatentFlowPrior(nn.Module):
 
         total = (
             loss_action
+            + prior_action_weight * loss_prior_action
             + prior_weight * loss_prior
             + semantic_weight * loss_semantic
         )
@@ -154,6 +174,10 @@ class StochLatentFlowPrior(nn.Module):
         return {
             "total_loss": total,
             "action_flow_loss": loss_action,
+            "prior_action_flow_loss": loss_prior_action,
+            "prior_action_mix_prob": torch.tensor(
+                float(prior_action_mix_prob), device=context.device
+            ),
             "prior_flow_loss": loss_prior,
             "semantic_future_loss": loss_semantic,
             # z 진단 (scalar, JSONL에 기록)
