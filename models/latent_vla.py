@@ -147,6 +147,85 @@ class LatentVLA(nn.Module):
         ).mean()
         return loss
 
+    @staticmethod
+    def _hard_task_contrastive_loss(
+        z: torch.Tensor,
+        task_ids: torch.Tensor,
+        margin: float = 0.2,
+    ) -> torch.Tensor:
+        z_norm = F.normalize(z, dim=-1)
+        sim = z_norm @ z_norm.T
+        pos_mask = task_ids.unsqueeze(0) == task_ids.unsqueeze(1)
+        neg_mask = ~pos_mask
+        pos_mask.fill_diagonal_(False)
+
+        valid = pos_mask.any(dim=1) & neg_mask.any(dim=1)
+        if not valid.any():
+            return torch.tensor(0.0, device=z.device)
+
+        pos_sim = sim.masked_fill(~pos_mask, 2.0).min(dim=1).values
+        neg_sim = sim.masked_fill(~neg_mask, -2.0).max(dim=1).values
+        return F.relu(margin + neg_sim[valid] - pos_sim[valid]).mean()
+
+    @staticmethod
+    def _negative_indices(batch: dict, actions: torch.Tensor, kind: str) -> torch.Tensor:
+        B = actions.shape[0]
+        device = actions.device
+        if B < 2:
+            return torch.arange(B, device=device)
+
+        if kind == "shuffle":
+            perm = torch.randperm(B, device=device)
+            if torch.equal(perm, torch.arange(B, device=device)):
+                perm = torch.roll(perm, shifts=1)
+            return perm
+
+        if kind == "task_negative":
+            task_ids = batch.get("task_id")
+            if task_ids is None:
+                return LatentVLA._negative_indices(batch, actions, "shuffle")
+            task_ids = task_ids.to(device)
+            perm = LatentVLA._negative_indices(batch, actions, "shuffle")
+            for i in range(B):
+                candidates = torch.where(task_ids != task_ids[i])[0]
+                if candidates.numel() > 0:
+                    j = torch.randint(candidates.numel(), (1,), device=device).item()
+                    perm[i] = candidates[j]
+            return perm
+
+        if kind == "motion_negative":
+            flat = actions.reshape(B, -1).float()
+            dist = torch.cdist(flat, flat)
+            dist.fill_diagonal_(-1.0)
+            return dist.argmax(dim=1)
+
+        raise ValueError(f"Unknown negative kind: {kind}")
+
+    def _counterfactual_binding_loss(
+        self,
+        context: torch.Tensor,
+        actions: torch.Tensor,
+        z_pos: torch.Tensor,
+        z_neg: torch.Tensor,
+        margin: float,
+    ):
+        B = actions.shape[0]
+        target = actions.reshape(B, -1)
+        pos_cond = torch.cat([context, z_pos], dim=-1)
+        neg_cond = torch.cat([context, z_neg], dim=-1)
+        x0 = torch.randn_like(target)
+        t_min, t_max = 1e-4, 1.0 - 1e-4
+        t = torch.rand(B, device=target.device) * (t_max - t_min) + t_min
+        xt = (1 - t[:, None]) * x0 + t[:, None] * target
+        target_velocity = target - x0
+        loss_pos = F.mse_loss(
+            self.system1.action_flow(xt, t, pos_cond), target_velocity
+        )
+        loss_neg = F.mse_loss(
+            self.system1.action_flow(xt, t, neg_cond), target_velocity
+        )
+        return F.relu(margin + loss_pos - loss_neg), loss_pos, loss_neg
+
     def compute_loss(
         self,
         batch: dict,
@@ -157,6 +236,14 @@ class LatentVLA(nn.Module):
         infonce_temperature: float = 0.07,
         prior_action_mix_prob: float = 0.0,
         prior_action_weight: float = 1.0,
+        z_spread_weight: float = 0.0,
+        z_spread_min_var: float = 0.1,
+        supervised_contrastive_weight: float = 0.0,
+        hard_contrastive_weight: float = 0.0,
+        hard_contrastive_margin: float = 0.2,
+        content_cf_weight: float = 0.0,
+        content_cf_margin: float = 0.1,
+        content_cf_negatives=None,
     ) -> dict:
         """
         batch 키:
@@ -208,6 +295,47 @@ class LatentVLA(nn.Module):
             loss_infonce = self._z_infonce_loss(z_star, task_ids, infonce_temperature)
             loss_dict["infonce_loss"] = loss_infonce
             loss_dict["total_loss"] = loss_dict["total_loss"] + infonce_weight * loss_infonce
+
+        loss_z_spread = torch.tensor(0.0, device=device)
+        if z_spread_weight > 0.0:
+            loss_z_spread = F.relu(z_spread_min_var - z_mu.var(dim=0).mean())
+            loss_dict["z_spread_loss"] = loss_z_spread
+            loss_dict["total_loss"] = loss_dict["total_loss"] + z_spread_weight * loss_z_spread
+
+        if "task_id" in batch:
+            task_ids = batch["task_id"].to(device)
+            if supervised_contrastive_weight > 0.0:
+                loss_supcon = self._z_infonce_loss(z_mu, task_ids, infonce_temperature)
+                loss_dict["supervised_contrastive_loss"] = loss_supcon
+                loss_dict["total_loss"] = (
+                    loss_dict["total_loss"] + supervised_contrastive_weight * loss_supcon
+                )
+            if hard_contrastive_weight > 0.0:
+                loss_hard = self._hard_task_contrastive_loss(
+                    z_mu, task_ids, hard_contrastive_margin
+                )
+                loss_dict["hard_contrastive_loss"] = loss_hard
+                loss_dict["total_loss"] = (
+                    loss_dict["total_loss"] + hard_contrastive_weight * loss_hard
+                )
+
+        if content_cf_weight > 0.0:
+            kinds = content_cf_negatives or ["shuffle", "task_negative", "motion_negative"]
+            cf_losses = []
+            for kind in kinds:
+                neg_idx = self._negative_indices(batch, actions, kind)
+                z_neg = z_star[neg_idx]
+                loss_cf, loss_pos, loss_neg = self._counterfactual_binding_loss(
+                    f_tilde, actions, z_star, z_neg, content_cf_margin
+                )
+                cf_losses.append(loss_cf)
+                loss_dict[f"cf_{kind}_loss"] = loss_cf
+                loss_dict[f"cf_{kind}_pos_action_loss"] = loss_pos
+                loss_dict[f"cf_{kind}_neg_action_loss"] = loss_neg
+                loss_dict[f"cf_{kind}_gap"] = loss_neg.detach() - loss_pos.detach()
+            loss_cf_total = torch.stack(cf_losses).mean()
+            loss_dict["content_cf_loss"] = loss_cf_total
+            loss_dict["total_loss"] = loss_dict["total_loss"] + content_cf_weight * loss_cf_total
 
         # ── M6 z-Distillation loss ─────────────────────────────────────────
         if self.distill_alpha > 0 and self._oracle_enc is not None and future_feat is not None:

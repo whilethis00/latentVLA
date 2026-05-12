@@ -1,8 +1,11 @@
-# M9: VLM-SFP + Prior-Action Co-training
+# M9: Posterior z content separation + content-level counterfactual binding
 #
 # Based on M8 (S1-only InfoNCE + task-balanced sampler).
-# Goal: expose the action decoder to deployable prior z during training so
-# inference-time prior z becomes a sample-specific plan signal.
+# Goal: make posterior z separate task/future content and force the action
+# decoder to read plausible content changes in z.
+#
+# M10 will be prior-action co-training if posterior content delta improves but
+# prior content delta remains low.
 
 system2:
   model_name: "google/paligemma-3b-pt-224"
@@ -35,11 +38,24 @@ loss:
   infonce_temperature: 0.07
   infonce_stage1_only: true
 
-  # M9 core: decoder sees z_q early, then increasingly sees z_p.
-  prior_action_weight: 1.0
+  # M9 core.
+  z_spread_weight: 0.1
+  z_spread_min_var: 0.1
+  supervised_contrastive_weight: 0.1
+  hard_contrastive_weight: 0.1
+  hard_contrastive_margin: 0.2
+  content_cf_weight: 0.1
+  content_cf_margin: 0.1
+  content_cf_negatives:
+    - "shuffle"
+    - "task_negative"
+    - "motion_negative"
+
+  # M10 candidate, intentionally disabled in M9.
+  prior_action_weight: 0.0
   prior_action_mix_start_epoch: 10
   prior_action_mix_ramp_epochs: 20
-  prior_action_mix_max: 0.5
+  prior_action_mix_max: 0.0
 
 data:
   dataset_type: libero
@@ -66,9 +82,9 @@ training:
   eval_every: 5
   save_every: 10
   best_of_ks: [1, 5]
-  output_dir: "outputs/runs/m9_prior_action_cotrain"
+  output_dir: "outputs/runs/m9_content_binding"
 
 logging:
   use_wandb: false
   project: "latentVLA"
-  run_name: "m9_prior_action_cotrain"
+  run_name: "m9_content_binding"

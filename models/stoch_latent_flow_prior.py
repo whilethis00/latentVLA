@@ -124,7 +124,7 @@ class StochLatentFlowPrior(nn.Module):
             self.action_flow, actions.reshape(B, -1), action_cond
         )
 
-        # 2b. Prior-action co-training (M9)
+        # 2b. Prior-action co-training (M10 candidate)
         # Expose the action decoder to deployable prior z during training.
         loss_prior_action = torch.tensor(0.0, device=context.device)
         if prior_action_mix_prob > 0.0 and prior_action_weight > 0.0:

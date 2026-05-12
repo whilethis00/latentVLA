@@ -1,22 +1,22 @@
 #!/bin/bash
 # ============================================================
-# M9: VLM-SFP + Prior-Action Co-training
+# M9: Posterior z content separation + content CF binding
 #
 # Usage:
-#   bash scripts/run_m9_prior_action_cotrain.sh
+#   bash scripts/run_m9_content_binding.sh
 #
 # Optional:
-#   NPROC=4 bash scripts/run_m9_prior_action_cotrain.sh
-#   PYTHON_CMD="python" bash scripts/run_m9_prior_action_cotrain.sh
-#   OUTPUT_DIR=outputs/runs/m9_test bash scripts/run_m9_prior_action_cotrain.sh
+#   NPROC=4 bash scripts/run_m9_content_binding.sh
+#   PYTHON_CMD="python" bash scripts/run_m9_content_binding.sh
+#   OUTPUT_DIR=outputs/runs/m9_test bash scripts/run_m9_content_binding.sh
 # ============================================================
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-CONFIG="${CONFIG:-configs/vlm_paligemma_m9_prior_action_cotrain.yaml}"
-OUTPUT_DIR="${OUTPUT_DIR:-outputs/runs/m9_prior_action_cotrain_$(date +%Y%m%d)}"
+CONFIG="${CONFIG:-configs/vlm_paligemma_m9_content_binding.yaml}"
+OUTPUT_DIR="${OUTPUT_DIR:-outputs/runs/m9_content_binding_$(date +%Y%m%d)}"
 RUN_NAME="${RUN_NAME:-$(basename "$OUTPUT_DIR")}"
 NPROC="${NPROC:-1}"
 
@@ -27,7 +27,7 @@ else
 fi
 
 echo "============================================================"
-echo " M9: VLM-SFP + Prior-Action Co-training"
+echo " M9: Posterior z content separation + content CF binding"
 echo " config    : $CONFIG"
 echo " output_dir: $OUTPUT_DIR"
 echo " run_name  : $RUN_NAME"
